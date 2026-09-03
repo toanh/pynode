@@ -6,7 +6,8 @@
     <meta name="description" content="Interactive online Graph Theory.">
     <meta charset="utf-8">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
-    <link href="css/style.css?version=0.9.7" rel="stylesheet" type="text/css">
+    <script src="coi-serviceworker.js"></script>
+    <link href="css/style.css?version=0.9.9" rel="stylesheet" type="text/css">
     <link rel="icon" type="image/x-icon" href="favicon.ico">
     <script src="js/resize.js?version=0.9.7"></script>
     <script src="js/d3_controls.js?version=0.9.7"></script>
@@ -16,7 +17,7 @@
     <script src="js/greuler/greuler.js?version=0.9.8"></script>
 </head>
 
-<body class="pynode_output" onload="brython({debug:1})" onresize="output_resize()">
+<body class="pynode_output" onresize="output_resize()">
 <div class="pynodeOutputContainer">
     <div class="outputPageWrapper">
         <div class="outputWrapper">
@@ -77,11 +78,9 @@
         </div>
     </div>
 </div>
-<script>
-    function getCode() {
-        return window.opener.editor.getValue()
-    }
-</script>
+<!-- This window used to boot its own Brython runtime and its own pynode_core, i.e. a
+     second Python interpreter. There is now exactly one worker, owned by the opener;
+     this page is purely a render target that the opener drives through graph_api.js. -->
 <script type="text/javascript">
     var greuler_instance = greuler({
         target: "#output",
@@ -90,22 +89,22 @@
     }).update();
 </script>
 <script>
-    function saveCode() {
-        localStorage.setItem("code", window.opener.getCode())
+    // Drive the opener's single worker. Console output is written by the opener.
+    function hostCall(fn) {
+        try {
+            if (window.opener && window.opener.PyNodeHost) window.opener.PyNodeHost[fn]();
+        } catch (e) { console.error("PyNode: opener unreachable", e); }
     }
-    function writeOutput(data, append) {
-        if (window.opener.pynode_console !== undefined) window.opener.pynode_console.writeOutput(data, append);
-    }
-</script>
-<script type="text/javascript" src="js/brython/brython.js?version=0.9.7"></script>
-<script type="text/javascript" src="js/brython/brython_stdlib.js?version=0.9.7"></script>
-<script type="text/python3">
-	import pynode_core
-	from browser import document, window, alert
-
-	document["run"].bind("click", pynode_core.button_play)
-	document["stop"].bind("click", pynode_core.button_stop)
-	document["restart"].bind("click", pynode_core.button_restart)
+    document.getElementById("run").onclick = function () {
+        try {
+            var h = window.opener.PyNodeHost, s = h.state();
+            if (s === "idle") h.play();
+            else if (s === "playing") h.pause();
+            else if (s === "paused") h.resume();
+        } catch (e) { console.error("PyNode: opener unreachable", e); }
+    };
+    document.getElementById("stop").onclick = function () { hostCall("stop"); };
+    document.getElementById("restart").onclick = function () { hostCall("restart"); };
 </script>
 <script>
     document.getElementById("run").style.backgroundColor = "#6E6E6E";

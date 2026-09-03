@@ -5,14 +5,15 @@
 
 ## How It Works
 ### Online Version
-* When the 'Play' button is pressed, the Python code written in the editor (provided by <a href="https://ace.c9.io/#nav=about">Ace</a>) is transpiled to JavaScript (using <a href="https://github.com/mauriciopoppe/greuler">Brython</a>).
-* The code is then executed instantaneously, and all API calls are added to a queue, ready to be executed sequentially.
-* The API calls trigger visual animations (using a modified version of <a href="https://github.com/maurizzzio/greuler">Greuler</a>, built on <a href="https://github.com/d3/d3">D3</a> and <a href="https://github.com/tgdwyer/WebCola">WebCola</a>).
+* The Python code is written in the editor, provided by <a href="https://microsoft.github.io/monaco-editor/">Monaco</a>, the editor component from VS Code.
+* When the 'Play' button is pressed, the code runs as real <a href="https://www.python.org/">CPython</a> in a web worker, using <a href="https://pyodide.org/">Pyodide</a> (CPython compiled to WebAssembly). Because it runs off the main thread, the interface stays responsive and a runaway loop can be stopped.
+* Each Graph API call emits a command to the main thread, which applies it to the visualization (using a modified version of <a href="https://github.com/maurizzzio/greuler">Greuler</a>, built on <a href="https://github.com/d3/d3">D3</a> and <a href="https://github.com/tgdwyer/WebCola">WebCola</a>).
 
 ## Project Structure
 ### Online Version
 * **pynode_graphlib.py\*** - The PyNode Graphlib API, which provides all Graph-related functions. This file maintains the current state of the graph, and informs graph_api.js of all the events that need to be visually displayed.
 * **pynode_core.py** - Handles the internal functions of the API, and acts as a bridge between pynode_graphlib.py and graph_api.js, allowing the API to be compatible with both the online and offline versions of PyNode.
+* **coi-serviceworker.js** - Supplies the COOP/COEP headers that GitHub Pages cannot send, which are required for `SharedArrayBuffer`. Must stay at the repository root so its service-worker scope covers every page.
 * **index.html** - The main page of the online version, which includes the editor, console, and output window. Also provides documentation for all features.
 * **pynode_editor.html, pynode_console.html, pynode_output.html** - Detachable editor/console/output windows.
 * **pynode_pojects/** - Contains the Python code for the examples provided on the website.
@@ -20,11 +21,16 @@
 * **/images/pynode\*** - Contains all icons used in the interface.
 * **/js/\*** - Contains all JavaScript code.
     * **graph_api.js** - Visually updates the graph, in parallel with the calls that were made to the GraphLib API.
+    * **pynode_worker.js** - Runs Pyodide and the Python API inside a module worker.
+    * **pynode_host.js** - Main-thread owner of the worker. Applies the command stream to the visualization, routes console output, and drives the play/pause/stop/restart controls.
+    * **monaco_setup.js, pynode_completions.js** - Editor setup, cross-window sync, and autocompletion for the PyNode API.
     * **d3_controls.js** - Handles interface events such as panning and zooming.
     * **resize.js** - Handles resizing of the window, and includes functions which manage node layout/positioning.
     * **/greuler** - The (modified) <a href="https://github.com/maurizzzio/greuler">Greuler API</a>.
     * **/cola** - The <a href="https://github.com/tgdwyer/WebCola">WebCola API</a>.
     * **/d3** - The <a href="https://github.com/d3/d3">D3 API</a>.
+    * **/monaco** - The <a href="https://microsoft.github.io/monaco-editor/">Monaco Editor</a>.
+    * **/pyodide** - The <a href="https://pyodide.org/">Pyodide</a> CPython/WebAssembly runtime.
 ### Offline Version
 * **offline_src/** - Contains the source code for the offline version of PyNode. Further details are provided within the directory.
 * **offline_downloads/** - Contains packaged downloads for the offline version.

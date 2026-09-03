@@ -1,274 +1,402 @@
+# PyNode core - online version.
+#
+# Runs inside a Pyodide (real CPython) module worker. This file is the only portability
+# seam: pynode_graphlib.py is written entirely against it, and is byte-identical to the
+# offline copy apart from its import line.
+#
+# Compare offline_src/pynode/src/pynode_core.py, which implements this same seam over a
+# stdin/stdout pipe to a CEF process. That version already had the blocking model this
+# one now uses; the two have converged rather than drifted further apart.
+#
+# Execution model: user code runs to completion in the worker, blocking for real on
+# pause(). Commands are emitted immediately, so the main thread renders live.
+#
+# The core stays pure Python - it never imports `js`. Everything platform-specific
+# arrives through set_hooks():
+#   sink(name, args)      deliver a command to the main thread
+#   sleep(ms)             block the worker (Atomics.wait on a SharedArrayBuffer)
+#   poll()                read shared control state: stop/pause flags + queued clicks
+#   read_position(id)     read the position mirror
+#
+# The hooks matter because a worker parked in Atomics.wait runs no JavaScript, so
+# postMessage cannot reach it. Anything the main thread must tell a *running* worker
+# has to travel through shared memory.
+
 import sys
 import time
 import traceback
-import javascript
-import random
-import json
-from browser import document, window, alert, timer
-from browser.local_storage import storage
+
+SLICE_MS = 16.0        # sleep granularity: also the interrupt/callback servicing rate
+
+
+class PynodeStop(Exception):
+    """Raised inside user code when Stop is pressed."""
+    pass
+
+
+class PynodeCoreGlobals:
+    GLOBAL_ID = 0
+    GLOBAL_USER_ID = 0
+    GLOBAL_DELAY_ID = 0
+
+    do_events = True
+
+    # Platform hooks (see set_hooks). While sink is None commands buffer in event_queue,
+    # which keeps the core exercisable headlessly.
+    sink = None
+    sleep = None
+    poll = None
+    read_position = None
+    event_queue = []
+
+    # Cooperative timer wheel. Pyodide has no working threading.Thread, so delay() and
+    # set_interval() cannot use the offline core's threads - nothing fires on its own,
+    # service() drives everything.
+    timers = {}                    # id -> [due_ms, func, period_ms or None]
+    delay_type = {}                # id -> 1 interval / 0 timeout   (read by graphlib)
+
+    click_listener_func = {"f": None}
+    pending_clicks = []
+
+    canvas = [500, 400]
+    error = ""
+    depth = 0                      # callback nesting depth
+    stopping = False
+
 
 import pynode_graphlib
 
-class PynodeCoreGlobals():
-    GLOBAL_ID = 0
-    GLOBAL_USER_ID = 0
-    event_queue = []
-    event_timer = None
-    update_timer = None
-    do_events = True
-    has_ended = False
-    do_update = True
-    fix_layout = True
-    did_fix_layout = False
-    did_update_layout = False
-    delay_type = {}
-    click_listener_func = {"f": None}
-    positioning_counter = None
-    error = ""
+
+# --- platform hooks --------------------------------------------------------
+
+def set_hooks(sink=None, sleep=None, poll=None, read_position=None):
+    PynodeCoreGlobals.sink = sink
+    PynodeCoreGlobals.sleep = sleep
+    PynodeCoreGlobals.poll = poll
+    PynodeCoreGlobals.read_position = read_position
+
+
+def take_queue():
+    q = PynodeCoreGlobals.event_queue
+    PynodeCoreGlobals.event_queue = []
+    return q
+
+
+def _send(name, args):
+    if PynodeCoreGlobals.sink is not None:
+        PynodeCoreGlobals.sink(name, args)
+    else:
+        PynodeCoreGlobals.event_queue.append([name, args])
+
 
 def enable_events(enable):
     PynodeCoreGlobals.do_events = enable
-def enable_update(enable):
-    PynodeCoreGlobals.do_update = enable
+
+
+# --- ids -------------------------------------------------------------------
 
 def next_global_id():
-    id_value = PynodeCoreGlobals.GLOBAL_ID
+    v = PynodeCoreGlobals.GLOBAL_ID
     PynodeCoreGlobals.GLOBAL_ID += 1
-    return id_value
+    return v
+
 
 def next_user_id():
-    id_value = PynodeCoreGlobals.GLOBAL_USER_ID
+    v = PynodeCoreGlobals.GLOBAL_USER_ID
     PynodeCoreGlobals.GLOBAL_USER_ID += 1
-    return id_value
+    return v
 
-class Event():
+
+def next_delay_id():
+    v = PynodeCoreGlobals.GLOBAL_DELAY_ID
+    PynodeCoreGlobals.GLOBAL_DELAY_ID += 1
+    return v
+
+
+# --- events ----------------------------------------------------------------
+
+class Event:
     def __init__(self, func, args):
         self.func = func
         self.args = args
-    def execute(self):
-        self.func(*self.args)
+
+
 class EventPrint(Event):
-    def __init__(self, func, args):
-        super().__init__(func, args)
-class EventPause():
+    pass
+
+
+class EventPause:
     def __init__(self, time):
         self.time = time
 
+
 def add_event(event, source=None):
-    if PynodeCoreGlobals.do_events:
-        if source is not None:
-            if isinstance(source, pynode_graphlib.Node) and not pynode_graphlib.graph.has_node(source): return
-            if isinstance(source, pynode_graphlib.Edge) and not pynode_graphlib.graph.has_edge(source): return
-        if isinstance(event, Event) and isinstance(event.func, str) and event.func.startswith("js_"):
-            event.args = [event.func, json.dumps(event.args)]
-            event.func = window["js_run_function"]
-        PynodeCoreGlobals.event_queue.append(event)
+    if not PynodeCoreGlobals.do_events:
+        return
+    if source is not None:
+        if isinstance(source, pynode_graphlib.Node) and not pynode_graphlib.graph.has_node(source): return
+        if isinstance(source, pynode_graphlib.Edge) and not pynode_graphlib.graph.has_edge(source): return
+
+    if isinstance(event, EventPause):
+        # A real sleep, unlike the old online build where this only queued a marker.
+        pump(event.time)
+    elif isinstance(event.func, str):
+        _send(event.func, list(event.args))
+    else:
+        # A plain Python callable (only the core itself builds these).
+        event.func(*event.args)
+
 
 def get_data(event, source=None):
     if source is not None:
         if isinstance(source, pynode_graphlib.Node) and not pynode_graphlib.graph.has_node(source): return None
         if isinstance(source, pynode_graphlib.Edge) and not pynode_graphlib.graph.has_edge(source): return None
-    if isinstance(event, Event) and isinstance(event.func, str) and event.func.startswith("js_"):
-        return json.loads(window.js_run_function_with_return(event.func, json.dumps(event.args)))
+    if event.func == js_node_get_position:
+        w, h = PynodeCoreGlobals.canvas[0], PynodeCoreGlobals.canvas[1]
+        if PynodeCoreGlobals.read_position is None:
+            return [None, None, w, h]
+        # Hook returns [known, x, y, canvas_w, canvas_h].
+        r = PynodeCoreGlobals.read_position(event.args[0])
+        if r is None or not r[0]:
+            return [None, None, int(r[3]) if r else w, int(r[4]) if r else h]
+        PynodeCoreGlobals.canvas = [int(r[3]), int(r[4])]
+        return [int(r[1]), int(r[2]), int(r[3]), int(r[4])]
     return None
 
+
+# --- console ---------------------------------------------------------------
+
 def format_string_HTML(s):
-    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>").replace("\"", "&quot;").replace("'", "&apos;").replace(" ", "&nbsp;")
+    return (s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+             .replace("\n", "<br>").replace("\"", "&quot;").replace("'", "&apos;")
+             .replace(" ", "&nbsp;"))
+
 
 def do_print(s, color=None):
-    if color is not None: window.writeOutput("<p style='display:inline;color:" + color + ";'>" + format_string_HTML(s) + "</p>", True)
-    else: window.writeOutput("<p style='display:inline;'>" + format_string_HTML(s) + "</p>", True)
+    style = "display:inline;"
+    if color is not None:
+        style += "color:" + color + ";"
+    _send("print", ["<p style='" + style + "'>" + format_string_HTML(str(s)) + "</p>"])
+
 
 def do_print_formatted(s):
-    window.writeOutput(s, True)
+    _send("print", [s])
+
 
 class PrintOutput:
     def write(self, data):
-        add_event(EventPrint(do_print, [str(data)]))
-        #do_print(data)
+        do_print(str(data))
     def flush(self):
         pass
 
+
 class ErrorOutput:
     def write(self, data):
-        PynodeCoreGlobals.error += "<p style='display:inline;color:red;'>" + format_string_HTML(str(data)) + "</p>"
-        #document["console"].innerHTML += "<p style='display:inline;color:red;'>" + format_string_HTML(str(data)) + "</p>"
+        PynodeCoreGlobals.error += ("<p style='display:inline;color:red;'>"
+                                    + format_string_HTML(str(data)) + "</p>")
     def flush(self):
         pass
+
 
 sys.stdout = PrintOutput()
 sys.stderr = ErrorOutput()
 
-def end_playing():
-    if not PynodeCoreGlobals.has_ended:
-        clear_button_run()
-        document["runPlay"].style.display = "inherit"
-        document["run"].bind("click", button_play)
-        do_print("Done\n", color="green")
-    PynodeCoreGlobals.has_ended = True
 
-def play_events():
+def handle_exception():
     try:
-        try:
-            if len(PynodeCoreGlobals.event_queue) > 0:
-                event = PynodeCoreGlobals.event_queue[0]
-                delay = 5
-                if isinstance(event, EventPause):
-                    delay = event.time
-                else:
-                    event.execute()
-                del PynodeCoreGlobals.event_queue[0]
-                PynodeCoreGlobals.event_timer = timer.set_timeout(play_events, delay)
-            else:
-                PynodeCoreGlobals.event_timer = timer.set_timeout(play_events, 100)
-                end_playing()
-        except:
-            traceback.print_exc(file=sys.stderr)
-            handle_exception(False)
-            end_playing()
-        sys.exit()
-    except:
+        if PynodeCoreGlobals.error:
+            do_print_formatted(PynodeCoreGlobals.error)
+            PynodeCoreGlobals.error = ""
+    except Exception:
         pass
 
-def handle_exception(emptyPrint=True):
-    try:
-        if PynodeCoreGlobals.event_queue is not None and emptyPrint:
-            for event in PynodeCoreGlobals.event_queue:
-                if isinstance(event, EventPrint):
-                    event.execute()
-        do_print_formatted(PynodeCoreGlobals.error)
-    except:
-        pass
+
+# --- cooperative scheduling ------------------------------------------------
+
+def _now():
+    return time.monotonic() * 1000.0
+
+
+class Timer:
+    """Same four-method surface pynode_graphlib.py expects from browser.timer,
+    backed by a due-time table instead of real timers."""
+
+    def set_timeout(self, func, time):
+        i = next_delay_id()
+        PynodeCoreGlobals.timers[i] = [_now() + time, func, None]
+        return i
+
+    def set_interval(self, func, time):
+        i = next_delay_id()
+        PynodeCoreGlobals.timers[i] = [_now() + time, func, time]
+        return i
+
+    def clear_timeout(self, i):
+        PynodeCoreGlobals.timers.pop(i, None)
+
+    def clear_interval(self, i):
+        PynodeCoreGlobals.timers.pop(i, None)
+
+
+timer = Timer()
+
 
 def execute_function(func, args):
+    PynodeCoreGlobals.depth += 1
     try:
-        pynode_graphlib._execute_function(func, args)
-    except Exception as exc:
+        func(*args)
+    except PynodeStop:
+        raise
+    except Exception:
         traceback.print_exc(file=sys.stderr)
-        handle_exception(False)
+        handle_exception()
+    finally:
+        PynodeCoreGlobals.depth -= 1
 
-def reset(clear_console=True):
-    try:
-        PynodeCoreGlobals.GLOBAL_USER_ID = 0
-        if clear_console: window.writeOutput("", False)
-        pynode_graphlib.graph._reset()
-        window.js_clear()
-        if PynodeCoreGlobals.event_timer is not None: timer.clear_timeout(PynodeCoreGlobals.event_timer)
-        if PynodeCoreGlobals.update_timer is not None: timer.clear_timeout(PynodeCoreGlobals.update_timer)
-        PynodeCoreGlobals.event_queue = [EventPause(100)]
-        PynodeCoreGlobals.fix_layout = True
-        PynodeCoreGlobals.did_fix_layout = False
-        PynodeCoreGlobals.did_update_layout = False
-        PynodeCoreGlobals.has_ended = False
-        PynodeCoreGlobals.delay_type = {}
-        PynodeCoreGlobals.positioning_counter = 0
-        PynodeCoreGlobals.error = ""
-        PynodeCoreGlobals.click_listener_func = {"f": None}
-        window.set_layout_type()
-        window.registerClickListener(node_click)
-        window.clickListenerFunc = None
-    except:
-        timer.set_timeout(reset, 20)
-
-def clear_button_run():
-    document["runPlay"].style.display = "none"
-    document["runPlayLoad"].style.display = "none"
-    document["runPause"].style.display = "none"
-    document["runResume"].style.display = "none"
-    for event in document["run"].events("click"):
-        document["run"].unbind("click", event)
-    document["run"].bind("click", save_code)
-
-def button_play(event):
-    reset()
-    clear_button_run()
-    document["runPlayLoad"].style.display = "inherit"
-    document["run"].bind("click", button_pause)
-    timer.set_timeout(do_play, 20)
-
-def do_play():
-    src = window.getCode()
-    try:
-        success = True
-        try:
-            pynode_graphlib._exec_code(src)
-        except Exception as exc:
-            traceback.print_exc(file=sys.stderr)
-            handle_exception()
-            success = False
-        clear_button_run()
-        document["runPause"].style.display = "inherit"
-        document["run"].bind("click", button_pause)
-        if success: play_events()
-        else: end_playing()
-        sys.exit()
-    except:
-        pass
-
-def button_pause(event):
-    clear_button_run()
-    document["runResume"].style.display = "inherit"
-    document["run"].bind("click", button_resume)
-    if PynodeCoreGlobals.event_timer is not None:
-        timer.clear_timeout(PynodeCoreGlobals.event_timer)
-
-def button_resume(event):
-    clear_button_run()
-    document["runPause"].style.display = "inherit"
-    document["run"].bind("click", button_pause)
-    PynodeCoreGlobals.event_timer = timer.set_timeout(play_events, 0)
-
-def button_stop(event):
-    clear_button_run()
-    document["runPlay"].style.display = "inherit"
-    document["run"].bind("click", button_play)
-    reset(False)
-    if PynodeCoreGlobals.event_timer is not None:
-        timer.clear_timeout(PynodeCoreGlobals.event_timer)
-
-def button_restart(event):
-    button_play(event)
 
 def node_click(node_id):
-    node = None
-    if pynode_graphlib.graph is not None and PynodeCoreGlobals.click_listener_func["f"] is not None:
-        for n in pynode_graphlib.graph.nodes():
-            if n._internal_id == node_id: node = n
-        if node is not None:
-            execute_function(PynodeCoreGlobals.click_listener_func["f"], [node])
+    listener = PynodeCoreGlobals.click_listener_func["f"]
+    if pynode_graphlib.graph is None or listener is None:
+        return
+    for n in pynode_graphlib.graph.nodes():
+        if n._internal_id == node_id:
+            execute_function(listener, [n])
+            return
 
-def save_code(event):
-    window.saveCode()
 
-def update_instant():
-    try: window.greuler_instance.update({"skipLayout": True})
-    except: PynodeCoreGlobals.update_timer = timer.set_timeout(update_instant, 20)
+def _control():
+    """Read shared control state. Returns (stop, pause)."""
+    if PynodeCoreGlobals.poll is None:
+        return (False, False)
+    r = PynodeCoreGlobals.poll()
+    # Hook returns [stop, pause, click_id, click_id, ...].
+    if r is None:
+        return (False, False)
+    for i in range(2, len(r)):
+        PynodeCoreGlobals.pending_clicks.append(int(r[i]))
+    return (bool(r[0]), bool(r[1]))
 
-def update_instant_layout():
-    try: window.updateLayout()
-    except: PynodeCoreGlobals.update_timer = timer.set_timeout(update_instant_layout, 20)
 
-def refresh_layout():
-    window.refreshLayout()
+def _sleep(ms):
+    if PynodeCoreGlobals.sleep is not None and ms > 0:
+        PynodeCoreGlobals.sleep(ms)
 
-def js_update(layout=True):
-    if PynodeCoreGlobals.do_update:
-        try:
-            if layout:
-                PynodeCoreGlobals.update_timer = timer.set_timeout(update_instant_layout, 50)
-                window.updateLayout()
-            else:
-                PynodeCoreGlobals.update_timer = timer.set_timeout(update_instant, 50)
-                window.greuler_instance.update({"skipLayout": True})
-        except:
-            pass
 
-def js_clear():
-    window.greuler_instance.graph.removeEdges(window.greuler_instance.graph.edges)
-    window.greuler_instance.graph.removeNodes(window.getGraphNodes())
-    js_update(True)
+def service():
+    """Dispatch due timers and queued clicks.
 
-# These functions have been moved over to JavaScript
+    Only at depth 0, so a pause() inside a callback flushes renders and sleeps but does
+    not recursively dispatch further callbacks - without this, nested dispatch recurses
+    without bound. Clicks arriving during a callback stay queued until it returns.
+    """
+    if PynodeCoreGlobals.depth != 0:
+        return
+
+    while PynodeCoreGlobals.pending_clicks:
+        node_click(PynodeCoreGlobals.pending_clicks.pop(0))
+
+    now = _now()
+    for i in sorted(PynodeCoreGlobals.timers.keys()):
+        entry = PynodeCoreGlobals.timers.get(i)
+        if entry is None or entry[0] > now:
+            continue
+        func, period = entry[1], entry[2]
+        if period is None:
+            PynodeCoreGlobals.timers.pop(i, None)
+            PynodeCoreGlobals.delay_type.pop(i, None)
+        else:
+            entry[0] = now + period
+        execute_function(func, [])
+
+
+def pump(total_ms):
+    """Sleep for total_ms, in slices, servicing timers and clicks in between.
+
+    Slicing is what gives Pyodide bytecode boundaries at which the interrupt buffer is
+    honoured, and what lets delay() callbacks and clicks run while user code sits inside
+    a pause(). Paused time does not count against the deadline.
+    """
+    deadline = _now() + total_ms
+    while True:
+        stop, paused = _control()
+        if stop:
+            raise PynodeStop()
+
+        if paused:
+            # Hold without consuming the pause budget.
+            before = _now()
+            _sleep(SLICE_MS)
+            deadline += _now() - before
+            continue
+
+        service()
+
+        remaining = deadline - _now()
+        if remaining <= 0:
+            return
+        _sleep(min(remaining, SLICE_MS))
+
+
+def service_idle():
+    """Called from the worker's JS idle tick once a run has finished.
+
+    Deliberately not a Python loop: the worker must return to its own event loop between
+    ticks or postMessage can never be delivered to it.
+    """
+    stop, paused = _control()
+    if stop or paused:
+        return
+    service()
+
+
+# --- run control -----------------------------------------------------------
+
+def reset():
+    PynodeCoreGlobals.GLOBAL_USER_ID = 0
+    pynode_graphlib.graph._reset()
+    pynode_graphlib.clear_delays()
+    PynodeCoreGlobals.timers = {}
+    PynodeCoreGlobals.delay_type = {}
+    PynodeCoreGlobals.pending_clicks = []
+    PynodeCoreGlobals.click_listener_func = {"f": None}
+    PynodeCoreGlobals.error = ""
+    PynodeCoreGlobals.depth = 0
+    PynodeCoreGlobals.do_events = True
+    PynodeCoreGlobals.event_queue = []
+    PynodeCoreGlobals.stopping = False
+    _send("js_clear", [])
+
+
+def run_code(src):
+    """Execute a user script.
+
+    Deliberately NOT pynode_graphlib._exec_code(): that does `namespace = locals()`
+    inside a function, which under CPython is just {'src': ...}, so user code cannot
+    see graph/Node/Edge/Color/pause. Brython chains function-scope locals() to module
+    globals, which is why it works there. graphlib is frozen, so we build the namespace
+    from a copy of its own module dict instead - which is what the docs promise users.
+
+    Returns "ok", "stopped" or "error".
+    """
+    ns = dict(pynode_graphlib.__dict__)
+    ns["__name__"] = "__main__"
+    try:
+        exec(src, ns, ns)
+        return "ok"
+    except PynodeStop:
+        return "stopped"
+    except KeyboardInterrupt:
+        # Pyodide's interrupt buffer raises this for a loop that never reaches pump().
+        return "stopped"
+    except Exception:
+        traceback.print_exc(file=sys.stderr)
+        handle_exception()
+        return "error"
+
+
+# --- the js_* protocol -----------------------------------------------------
+# These names must match the function names in js/graph_api.js exactly.
+
 js_add_node = "js_add_node"
 js_remove_node = "js_remove_node"
 js_add_edge = "js_add_edge"
@@ -276,6 +404,8 @@ js_remove_edge = "js_remove_edge"
 js_add_all = "js_add_all"
 js_remove_all = "js_remove_all"
 js_set_spread = "js_set_spread"
+js_clear = "js_clear"
+js_update = "js_update"
 js_node_set_value = "js_node_set_value"
 js_node_set_position = "js_node_set_position"
 js_node_get_position = "js_node_get_position"

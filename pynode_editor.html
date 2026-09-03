@@ -6,7 +6,8 @@
     <meta name="description" content="Interactive online Graph Theory.">
     <meta charset="utf-8">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
-    <link href="css/style.css?version=0.9.7" rel="stylesheet" type="text/css">
+    <script src="coi-serviceworker.js"></script>
+    <link href="css/style.css?version=0.9.9" rel="stylesheet" type="text/css">
     <link rel="icon" type="image/x-icon" href="favicon.ico">
     <script src="js/resize.js?version=0.9.7"></script>
 
@@ -15,7 +16,7 @@
     </script>
 </head>
 
-<body class="pynode_editor" onresize="editor_resize()">
+<body class="pynode_editor">
 <div class="pynodeEditorContainer">
     <div class="editorPageWrapper">
         <div class="editorWrapper">
@@ -37,37 +38,31 @@
         </div>
     </div>
 </div>
-<script src="js/ace/ace.js" type="text/javascript" charset="utf-8"></script>
-<script src="js/ace/mode-python.js" type="text/javascript" charset="utf-8"></script>
-<script src="js/ace/ext-language-tools.js" type="text/javascript" charset="utf-8"></script>
+<script src="js/monaco/vs/loader.js"></script>
+<script src="js/pynode_completions.js?version=0.9.9"></script>
+<script src="js/monaco_setup.js?version=0.9.9"></script>
 <script>
-    editor_resize();
-    var editor = ace.edit("editor");
     function getCode() {
-        return editor.getValue();
+        return window.editor ? window.editor.getValue() : "";
+    }
+    function applyCode(src) {
+        if (window.editor) window.editor.setValue(src);
     }
     function setCode(src) {
-        if (enable_editor) {
-            editor.setValue(src, -1);
-        }
+        if (enable_editor) applyCode(src);
     }
 
-    var openerSrc = window.opener.editor.getValue();
-    if (openerSrc !== undefined) {
-        editor.setValue(openerSrc, -1);
+    // Seed once from the opener; after that the two editors stay in sync over
+    // BroadcastChannel (see monaco_setup.js), which needs no opener relationship.
+    // localStorage is the fallback when this page is opened directly.
+    var seed = "";
+    try {
+        seed = window.opener ? window.opener.getCode() : (localStorage.getItem("code") || "");
+    } catch (e) {
+        seed = localStorage.getItem("code") || "";
     }
-    var PythonMode = ace.require("ace/mode/python").Mode;
-    editor.session.setMode(new PythonMode());
-    ace.require("ace/ext/language_tools");
-    editor.setOptions({
-        fontSize: "11pt",
-        enableBasicAutocompletion: true
-    });
-    editor.on("change", function () {
-        enable_editor = false;
-        if (window.opener.enable_editor) window.opener.setCode(editor.getValue());
-        enable_editor = true;
-    });
+
+    PyNodeEditor.create({ container: "editor", value: seed });
 </script>
 
 <input id="file-input" type="file" name="name" style="display: none;"/>

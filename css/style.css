@@ -297,14 +297,15 @@ body.pynode .editorHeader {
     background-color: #F0F0F0;
 }
 
+/* Monaco sizes itself to this container via automaticLayout, so it must be a normal
+   in-flow box. The old rules were position:absolute with a placeholder 100px width that
+   js/resize.js overwrote at runtime; that hack is no longer needed. */
 body.pynode #editor {
-    position: absolute;
-    width: 100px;
+    width: 100%;
     height: 710px;
 }
 
 body.pynode_editor #editor {
-    position: absolute;
     width: 100%;
     height: calc(100% - 50px);
 }

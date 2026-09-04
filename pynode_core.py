@@ -22,6 +22,7 @@
 # postMessage cannot reach it. Anything the main thread must tell a *running* worker
 # has to travel through shared memory.
 
+import builtins
 import sys
 import time
 import traceback
@@ -192,7 +193,7 @@ class PrintOutput:
 
 class ErrorOutput:
     def write(self, data):
-        PynodeCoreGlobals.error += ("<p style='display:inline;color:red;'>"
+        PynodeCoreGlobals.error += ("<p style='display:inline;color:var(--c-err);'>"
                                     + format_string_HTML(str(data)) + "</p>")
     def flush(self):
         pass
@@ -335,6 +336,50 @@ def pump(total_ms):
         if remaining <= 0:
             return
         _sleep(min(remaining, SLICE_MS))
+
+
+# Route time.sleep through pump() as well.
+#
+# Pyodide's own time.sleep blocks the worker without giving us a chance to flush, so
+# `for i in range(10): print(i); sleep(1)` showed nothing for ten seconds and then dumped
+# everything at once. Going through pump() means sleep() flushes pending output first,
+# services delay() callbacks and node clicks while it waits, and is interruptible by Stop
+# - i.e. it behaves exactly like pause(). pause() itself is untouched.
+#
+# No recursion: pump() measures elapsed time with time.monotonic() and blocks through the
+# JS sleep hook, never through time.sleep.
+_real_sleep = time.sleep
+
+
+def _pynode_sleep(seconds):
+    if seconds < 0:
+        raise ValueError("sleep length must be non-negative")
+    pump(float(seconds) * 1000.0)
+
+
+time.sleep = _pynode_sleep
+
+
+# input() reads through the worker's blocking stdin hook.
+#
+# Pyodide's default stdin calls window.prompt, which does not exist in a worker, so
+# without a handler CPython raised OSError: [Errno 29]. We wrap builtins.input rather
+# than relying on CPython's own prompt/readline path so that pressing Stop while an
+# input is pending ends the run cleanly as "Stopped", instead of surfacing an EOFError
+# traceback and leaving the queued SIGINT to fire at some arbitrary later bytecode.
+def _pynode_input(prompt=""):
+    if prompt is not None and prompt != "":
+        do_print(prompt)
+    line = sys.stdin.readline()
+    stop, _ = _control()
+    if stop:
+        raise PynodeStop()
+    if line == "":
+        raise EOFError("input() is unavailable: this page is not cross-origin isolated")
+    return line[:-1] if line.endswith("\n") else line
+
+
+builtins.input = _pynode_input
 
 
 def service_idle():

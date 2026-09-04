@@ -30,7 +30,9 @@ var PyNodeEditor = (function () {
             mon = monaco.editor.create(document.getElementById(containerId), {
                 value: opts.value || "",
                 language: "python",
-                theme: "vs",              // Ace set no theme, so its light default applied
+                // Monaco cannot read CSS custom properties, so it is told the theme
+                // explicitly here and again by PyNodeTheme whenever it changes.
+                theme: (window.PyNodeTheme && PyNodeTheme.resolved() === "dark") ? "vs-dark" : "vs",
                 fontSize: 15,             // Ace used 11pt
                 automaticLayout: true,    // replaces the resize.js width hack + editor_resize() stub
                 minimap: { enabled: false },

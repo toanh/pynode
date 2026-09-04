@@ -7,7 +7,12 @@
     <meta charset="utf-8">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <script src="coi-serviceworker.js"></script>
-    <link href="css/style.css?version=0.9.9" rel="stylesheet" type="text/css">
+    <!-- Apply a stored theme before the stylesheet paints, so there is no flash of the
+         wrong colours. Deliberately only writes the attribute when the user has chosen:
+         while it is absent, prefers-color-scheme resolves natively in CSS. -->
+    <script>(function(){try{var t=localStorage.getItem("pynode-theme");if(t==="dark"||t==="light")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+    <link href="css/style.css?version=0.9.10" rel="stylesheet" type="text/css">
+    <script src="js/pynode_theme.js?version=0.9.10"></script>
     <link rel="icon" type="image/x-icon" href="favicon.ico">
 </head>
 
@@ -27,10 +32,13 @@
 </div>
 <script>
     function writeOutput(data, append) {
-        if (append) document.getElementById("console").innerHTML += data;
-        else document.getElementById("console").innerHTML = data;
+        var el = document.getElementById("console");
+        if (!el) return;
+        // See the note in index.html: innerHTML += would destroy the live input() field.
+        if (append) el.insertAdjacentHTML("beforeend", data);
+        else el.innerHTML = data;
+        el.scrollTop = el.scrollHeight;
     }
-    writeOutput("<p style='color:green;'>Done!</p>", true);
 </script>
 </body>
 </html>

@@ -10,7 +10,7 @@
 
 import { loadPyodide } from './pyodide/pyodide.mjs';
 
-const VERSION = '0.9.9';
+const VERSION = '0.9.10';
 const here = (p) => new URL(p, location.href).href;
 
 // --- SAB layout. Must match js/pynode_host.js exactly. ---
@@ -19,6 +19,9 @@ const CTRL_STOP = 1;
 const CTRL_PAUSE = 2;
 const CTRL_CLICK_W = 3;
 const CTRL_CLICK_R = 4;
+const CTRL_IO_STATE = 5;   // 0 idle | 1 pending | 2 ready | 3 cancelled
+const CTRL_IO_LEN = 6;     // byte length of the answer in the io buffer
+const CTRL_IO_SEQ = 7;     // request id, so a stale answer cannot be consumed by a later run
 const CLICK_BASE = 8;
 const CLICK_CAP = 64;
 
@@ -32,6 +35,8 @@ let core = null;
 let ctrl = null;         // Int32Array on shared memory
 let pos = null;          // Float64Array on shared memory
 let interrupt = null;    // Uint8Array on shared memory
+let io = null;           // Uint8Array on shared memory - UTF-8 answer from input()
+let shared = true;       // false when the page is not cross-origin isolated
 let idleTimer = null;
 
 const post = (msg) => self.postMessage(msg);
@@ -39,12 +44,14 @@ const post = (msg) => self.postMessage(msg);
 // Commands accumulate here and are flushed as one batch whenever the worker is about to
 // sleep, so everything between two pause() calls reaches the renderer together.
 let outbox = [];
+let lastFlush = 0;
 
 function flush() {
     if (outbox.length) {
         post({ t: 'events', events: outbox });
         outbox = [];
     }
+    lastFlush = performance.now();
 }
 
 // --- hooks handed to pynode_core.set_hooks() ---
@@ -55,7 +62,10 @@ function sink(name, args) {
     try { a = args.toJs ? args.toJs({ dict_converter: Object.fromEntries }) : args; }
     catch (e) { a = []; }
     outbox.push([name, a]);
-    if (outbox.length >= 512) flush();   // guard against unbounded growth
+    // Flush on a time budget as well as a size cap, so output streams during a CPU-bound
+    // loop that never sleeps. postMessage from a running (not blocked) worker is safe -
+    // the main thread's event loop is free to receive it.
+    if (outbox.length >= 512 || (performance.now() - lastFlush) > 50) flush();
 }
 
 let canWait = true;
@@ -89,6 +99,53 @@ function poll() {
     return out;
 }
 
+// Blocking stdin, so input() works.
+//
+// Pyodide's default stdin handler calls window.prompt, which does not exist in a worker,
+// so Pyodide installs an erroring handler instead - that is the OSError: [Errno 29] users
+// were hitting. Because the worker already blocks on Atomics.wait, a genuinely blocking
+// input() drops straight into the existing design.
+//
+// autoEOF defaults to true when `stdin` is supplied, so Pyodide terminates each returned
+// string as one line itself: return the raw answer, never append "\n".
+function stdin() {
+    // Without real shared memory the host's answer can never reach us (postMessage COPIES
+    // a plain ArrayBuffer), so fail fast as EOF instead of spinning a core forever.
+    if (!shared) return null;
+
+    const seq = (Atomics.load(ctrl, CTRL_IO_SEQ) + 1) | 0;
+    Atomics.store(ctrl, CTRL_IO_SEQ, seq);
+    Atomics.store(ctrl, CTRL_IO_STATE, 1);
+
+    // Ordered with the output stream rather than raced against it: the prompt was just
+    // written by Python, and this rides the same outbox, so the host appends the field
+    // in the very same pass that renders the prompt.
+    outbox.push(['__input', [seq]]);
+    flush();
+
+    for (;;) {
+        if (Atomics.load(ctrl, CTRL_STOP)) {
+            Atomics.store(ctrl, CTRL_IO_STATE, 0);
+            return null;           // pynode_core._pynode_input turns this into PynodeStop
+        }
+        const state = Atomics.load(ctrl, CTRL_IO_STATE);
+        if (state === 2) {
+            const len = Atomics.load(ctrl, CTRL_IO_LEN);
+            // TextDecoder refuses a view backed by a SharedArrayBuffer, so copy out first.
+            const bytes = new Uint8Array(len);
+            bytes.set(io.subarray(0, len));
+            Atomics.store(ctrl, CTRL_IO_STATE, 0);
+            return new TextDecoder().decode(bytes);
+        }
+        if (state === 3) {
+            Atomics.store(ctrl, CTRL_IO_STATE, 0);
+            return null;           // EOF
+        }
+        const v = Atomics.load(ctrl, CTRL_NOTIFY);
+        Atomics.wait(ctrl, CTRL_NOTIFY, v, 50);
+    }
+}
+
 function readPosition(id) {
     const w = pos[POS_W] || 500, h = pos[POS_H] || 400;
     if (id < 0 || id >= POS_MAX) return [0, 0, 0, w, h];
@@ -100,6 +157,8 @@ async function boot(buffers) {
     ctrl = new Int32Array(buffers.ctrl);
     pos = new Float64Array(buffers.pos);
     interrupt = new Uint8Array(buffers.interrupt);
+    io = new Uint8Array(buffers.io);
+    shared = (typeof SharedArrayBuffer !== 'undefined') && (buffers.ctrl instanceof SharedArrayBuffer);
 
     post({ t: 'progress', step: 'loading python' });
     pyodide = await loadPyodide({ indexURL: here('pyodide/') });
@@ -107,6 +166,7 @@ async function boot(buffers) {
     // Lets the main thread break a tight loop that never reaches pump(): Pyodide checks
     // this buffer at bytecode boundaries and raises KeyboardInterrupt.
     pyodide.setInterruptBuffer(interrupt);
+    pyodide.setStdin({ stdin: stdin, isatty: false });
 
     // Fetch the two .py files rather than bundling them: they stay on disk at the repo
     // root, where the crawler anchors at the end of index.html still point, and they stay
@@ -146,6 +206,7 @@ function startIdle() {
 function clearStop() {
     Atomics.store(ctrl, CTRL_STOP, 0);
     Atomics.store(ctrl, CTRL_PAUSE, 0);
+    Atomics.store(ctrl, CTRL_IO_STATE, 0);
     interrupt[0] = 0;
 }
 

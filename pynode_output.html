@@ -7,7 +7,12 @@
     <meta charset="utf-8">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <script src="coi-serviceworker.js"></script>
-    <link href="css/style.css?version=0.9.9" rel="stylesheet" type="text/css">
+    <!-- Apply a stored theme before the stylesheet paints, so there is no flash of the
+         wrong colours. Deliberately only writes the attribute when the user has chosen:
+         while it is absent, prefers-color-scheme resolves natively in CSS. -->
+    <script>(function(){try{var t=localStorage.getItem("pynode-theme");if(t==="dark"||t==="light")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+    <link href="css/style.css?version=0.9.10" rel="stylesheet" type="text/css">
+    <script src="js/pynode_theme.js?version=0.9.10"></script>
     <link rel="icon" type="image/x-icon" href="favicon.ico">
     <script src="js/resize.js?version=0.9.7"></script>
     <script src="js/d3_controls.js?version=0.9.7"></script>
@@ -107,13 +112,9 @@
     document.getElementById("restart").onclick = function () { hostCall("restart"); };
 </script>
 <script>
-    document.getElementById("run").style.backgroundColor = "#6E6E6E";
-    document.getElementById("stop").style.backgroundColor = "#6E6E6E";
-    document.getElementById("restart").style.backgroundColor = "#6E6E6E";
-    document.getElementById("run").style.cursor = "pointer";
-    document.getElementById("stop").style.cursor = "pointer";
-    document.getElementById("restart").style.cursor = "pointer";
-
+    // The button background and cursor used to be set here as INLINE styles, which beat
+    // any stylesheet rule and made the buttons untouchable by theming. They now live in
+    // css/style.css under the #run/#stop/#restart rule.
     document.getElementById("layout1").onclick = function () {
         if (document.getElementById("layout1On").style.display === "none") {
             document.getElementById("layout1On").style.display = "inherit";

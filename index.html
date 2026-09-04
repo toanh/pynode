@@ -9,7 +9,12 @@
          because a service worker's scope is its own directory, and GitHub Pages cannot send the
          Service-Worker-Allowed header needed to widen it. No ?version= so the SW URL stays stable. -->
     <script src="coi-serviceworker.js"></script>
-    <link href="css/style.css?version=0.9.9" rel="stylesheet" type="text/css">
+    <!-- Apply a stored theme before the stylesheet paints, so there is no flash of the
+         wrong colours. Deliberately only writes the attribute when the user has chosen:
+         while it is absent, prefers-color-scheme resolves natively in CSS. -->
+    <script>(function(){try{var t=localStorage.getItem("pynode-theme");if(t==="dark"||t==="light")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+    <link href="css/style.css?version=0.9.10" rel="stylesheet" type="text/css">
+    <script src="js/pynode_theme.js?version=0.9.10"></script>
     <link rel="icon" type="image/x-icon" href="favicon.ico">
     <script src="js/resize.js?version=0.9.7"></script>
     <script src="js/d3_controls.js?version=0.9.7"></script>
@@ -761,8 +766,8 @@
 <!-- No ?version= on the AMD base path: Monaco's loader builds child-module URLs from it
      itself and will not propagate a query string. Bump the js/monaco/ directory name instead. -->
 <script src="js/monaco/vs/loader.js"></script>
-<script src="js/pynode_completions.js?version=0.9.9"></script>
-<script src="js/monaco_setup.js?version=0.9.9"></script>
+<script src="js/pynode_completions.js?version=0.9.10"></script>
+<script src="js/monaco_setup.js?version=0.9.10"></script>
 <script>
     resize();
 
@@ -825,8 +830,12 @@
     function writeOutput(data, append) {
         var el = document.getElementById("console");
         if (el) {
-            if (append) el.innerHTML += data;
+            // insertAdjacentHTML, not innerHTML +=, which re-parses and replaces every
+            // child - that would destroy the live <input> element (and its listeners)
+            // that input() appends to the console while it waits for an answer.
+            if (append) el.insertAdjacentHTML("beforeend", data);
             else el.innerHTML = data;
+            el.scrollTop = el.scrollHeight;
         }
         // The `pynode_output === undefined &&` guard that used to be here suppressed the
         // forward whenever the output popup was open, so the detached console went silent.
@@ -875,14 +884,11 @@
 <!-- Python now runs as real CPython inside js/pynode_worker.js. The button state machine
      that used to live in pynode_core.py (driven from Brython via document[...].bind) has
      moved into js/pynode_host.js, because a worker has no DOM. -->
-<script src="js/pynode_host.js?version=0.9.9"></script>
+<script src="js/pynode_host.js?version=0.9.10"></script>
 <script>
-    document.getElementById("run").style.backgroundColor = "#6E6E6E";
-    document.getElementById("stop").style.backgroundColor = "#6E6E6E";
-    document.getElementById("restart").style.backgroundColor = "#6E6E6E";
-    document.getElementById("run").style.cursor = "pointer";
-    document.getElementById("stop").style.cursor = "pointer";
-    document.getElementById("restart").style.cursor = "pointer";
+    // The button background and cursor used to be set here as INLINE styles, which beat
+    // any stylesheet rule and made the buttons untouchable by theming. They now live in
+    // css/style.css under the #run/#stop/#restart rule.
     PyNodeHost.init();
 
     document.getElementById("layout1").onclick = function () {

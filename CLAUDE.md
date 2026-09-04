@@ -27,7 +27,11 @@ There is no build step, package manager, test suite, or linter. The root of the 
 
 User code never touches the renderer directly. Every API call in [pynode_graphlib.py](pynode_graphlib.py) mutates in-memory graph state *and* emits a `[name, args]` command naming a JavaScript function in [js/graph_api.js](js/graph_api.js) plus JSON-serializable args. `pause(ms)` emits a `["pause", [ms]]` marker.
 
-**User code blocks for real.** `pause(ms)` genuinely sleeps the worker (`Atomics.wait`) while the main thread renders. Commands accumulate in the worker's outbox and are flushed as one batch immediately before each sleep, so everything between two `pause()` calls reaches the renderer together and is applied on one `requestAnimationFrame`. There is no replay timer on the main thread — pacing comes entirely from the worker's real sleeps.
+**User code blocks for real.** `pause(ms)` genuinely sleeps the worker (`Atomics.wait`) while the main thread renders. Commands accumulate in the worker's outbox and are flushed immediately before each sleep, on a ~50 ms time budget, and at a 512-command cap; the host applies each arriving batch on a `requestAnimationFrame`. There is no replay timer on the main thread — pacing comes entirely from the worker's real sleeps.
+
+The time budget is what makes output stream during a CPU-bound loop that never sleeps. Its cost is that a run of commands between two `pause()` calls is no longer guaranteed to land in a single frame. If you need a set of changes to appear atomically, use the mechanism that already exists for it: `enable_events(False)` around the mutations, then a single `js_add_all` / `js_remove_all`.
+
+**`time.sleep` is monkeypatched onto `pump()`** in `pynode_core.py`. Pyodide's own `time.sleep` blocks the worker without letting it flush, so `print(i); sleep(1)` in a loop showed nothing for the whole run and then dumped everything. Routed through `pump`, `sleep()` flushes first, services `delay()` callbacks and clicks while it waits, and is interruptible by Stop — i.e. it behaves exactly like `pause()`. That convergence is deliberate.
 
 Consequences worth remembering when changing the API:
 
@@ -38,6 +42,13 @@ Consequences worth remembering when changing the API:
 - `add_event(..., source=node_or_edge)` drops the command if the source has since been removed from the graph.
 - `Node.position()` reads a `Float64Array` position mirror the host writes every 100 ms, so it reflects the last rendered frame rather than the exact instant.
 - End-of-run effects ("Done", the state flip to idle) are enqueued as synthetic `print` / `__state` commands rather than applied directly, so they stay ordered behind commands still waiting for a frame.
+
+**`input()` blocks through the same machinery.** Pyodide's default stdin calls `window.prompt`, which does not exist in a worker, so it installed an erroring handler — the `OSError: [Errno 29]` users hit. `pyodide.setStdin` now supplies a hook that flushes (so the prompt paints), emits a synthetic `__input` command, and parks on `Atomics.wait`; the host appends a real `<input>` to the console and writes the answer back through a shared `io` buffer. `builtins.input` is wrapped in `pynode_core.py` so that Stop during a pending prompt ends the run as a clean "Stopped" rather than an `EOFError` traceback.
+
+Three traps to remember here:
+- **`TextEncoder` and `TextDecoder` both refuse SharedArrayBuffer-backed views** (`The provided ArrayBufferView value must not be shared`). Marshal through a normal `Uint8Array` and copy across. Pyodide swallows the resulting throw and reports it as `OSError`, which is thoroughly misleading.
+- The input field is appended by the `__input` command riding the ordinary command stream, **not** by a `postMessage` raced against it. The same reason `__state` exists: anything ordered against console output has to travel in-band.
+- `CTRL_IO_SEQ` guards against a stale answer from a finished run being consumed by the next one's first `input()`.
 
 **Stop** sets a flag in the control block, writes SIGINT into Pyodide's interrupt buffer, and bumps the notify word. All three are needed: the notify wakes a sleeping worker, and the interrupt buffer is the only thing that can break a tight loop that never reaches `pump()`. That combination is what makes an endless loop survivable — it used to freeze the tab permanently.
 
@@ -73,6 +84,8 @@ Editor state persists in `localStorage` under the key `code`. `?project=<name>` 
 
 - **Keep online and offline in sync — but know which files actually are.** `pynode_graphlib.py`, `js/graph_api.js` and `js/resize.js` are byte-identical to their `offline_src/pynode/src/` counterparts (graphlib bar its import line) and must stay so. `pynode_core.py` is *deliberately* divergent — it is the portability seam, and the two implementations differ by transport. `css/style.css` was already divergent before this work (the offline copy has no `#editor` rules).
 - **Publishing the offline version** (per [offline_src/README.md](offline_src/README.md)): bump `offline_src/pynode/src/version.txt`, zip that `src/` folder to `offline_downloads/latest_src.zip`, and set `offline_downloads/latest_version.txt` to the same number — that is what the in-app auto-updater polls.
+- **Theming**: `css/style.css` defines every colour as a custom property on `:root`, with light as the default. The dark values appear **twice** — once under `@media (prefers-color-scheme: dark)` guarded by `:root:not([data-theme="light"])` (the first-visit default), and once under `:root[data-theme="dark"]` (an explicit choice). Plain CSS cannot alias a declaration block, so the duplication is the honest cost; invert that guard and choosing light on a dark desktop silently does nothing. `js/pynode_theme.js` persists the choice, syncs the four documents over `BroadcastChannel("pynode-theme")`, and drives Monaco (which cannot read custom properties). `:root` also sets `color-scheme`, which is what themes native widgets and scrollbars.
+  Two rules: **never set a colour from JavaScript** — an inline style beats the stylesheet and silently defeats the whole system (this is exactly what the old `#6E6E6E` run-button assignments did) — and **`--bg-canvas` stays light in both themes**, because node and edge defaults come from `Color.DARK_GREY` / `Color.LIGHT_GREY` in the frozen `pynode_graphlib.py`.
 - **Cache busting**: first-party script and stylesheet tags carry `?version=0.9.x` query strings. Bump the version on a file's tag in *every* HTML page that references it, or returning users get stale assets. **Two exceptions, both mandatory:**
   - `js/monaco/vs` and `js/pyodide/` must have **no** query string. Monaco's AMD loader and `loadPyodide({indexURL})` construct their own child-module URLs from those base paths and will not propagate one. To bust a vendored library, rename its directory.
   - `coi-serviceworker.js` carries no version either, so the service worker URL stays stable across deploys.

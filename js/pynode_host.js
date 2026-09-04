@@ -12,18 +12,23 @@
 var PyNodeHost = (function () {
     "use strict";
 
-    var VERSION = "0.9.9";
+    var VERSION = "0.9.10";
 
     // --- SAB layout. Must match js/pynode_worker.js exactly. ---
     var CTRL_NOTIFY = 0, CTRL_STOP = 1, CTRL_PAUSE = 2, CTRL_CLICK_W = 3, CTRL_CLICK_R = 4;
+    var CTRL_IO_STATE = 5, CTRL_IO_LEN = 6;   // 0 idle | 1 pending | 2 ready | 3 cancelled
+    var CTRL_IO_SEQ = 7;                      // request id, guards against stale answers
     var CLICK_BASE = 8, CLICK_CAP = 64, CTRL_LEN = CLICK_BASE + CLICK_CAP;
     var POS_W = 0, POS_H = 1, POS_BASE = 4, POS_MAX = 1024, POS_LEN = POS_BASE + POS_MAX * 3;
+    var IO_LEN = 8192;                        // UTF-8 answer from input()
 
     var worker = null;
     var ready = false;
     var isolated = (typeof SharedArrayBuffer === "function") && (self.crossOriginIsolated === true);
     var state = "boot";              // boot | idle | playing | paused
-    var ctrl = null, pos = null, interrupt = null;
+    var ctrl = null, pos = null, interrupt = null, io = null;
+    var inputEl = null;              // the live <input> while input() is pending
+    var pendingSeq = -1;             // which input() request that field belongs to
     var pending = [];                // command batches awaiting a frame
     var frameQueued = false;
     var positionsTimer = null;
@@ -47,6 +52,7 @@ var PyNodeHost = (function () {
             // Synthetic commands, so end-of-run effects stay ordered behind the commands
             // still waiting for a frame - otherwise "Done" prints before the last output.
             if (name === "__state") { setState(args[0]); return; }
+            if (name === "__input") { askInput(args[0]); return; }
             if (typeof t[name] === "function") t[name].apply(t, args);
         } catch (e) {
             console.error("PyNode: failed to apply", name, e);
@@ -70,6 +76,85 @@ var PyNodeHost = (function () {
             frameQueued = true;
             requestAnimationFrame(applyFrame);
         }
+    }
+
+    // --- blocking input() ---------------------------------------------------
+    // The worker is parked in Atomics.wait inside its stdin hook while this runs, so the
+    // answer has to travel back through shared memory, not postMessage.
+
+    // Mirrors pynode_core.format_string_HTML so the echoed answer lines up with the
+    // prompt, which came through Python's stdout and had its spaces turned into &nbsp;.
+    function escapeConsole(s) {
+        return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+                        .replace(/"/g, "&quot;").replace(/'/g, "&apos;").replace(/ /g, "&nbsp;");
+    }
+
+    // Put the field where the user is actually looking.
+    function consoleWindow() {
+        try {
+            if (typeof pynode_console !== "undefined" && pynode_console && !pynode_console.closed) {
+                return pynode_console;
+            }
+        } catch (e) {}
+        return window;
+    }
+
+    function removeInput() {
+        try {
+            if (inputEl && inputEl.parentNode) inputEl.parentNode.removeChild(inputEl);
+        } catch (e) {}
+        inputEl = null;
+    }
+
+    function submitInput(value) {
+        removeInput();
+        // Only answer the request this field was created for. Without the sequence check a
+        // stray Enter after a run ended could pre-load an answer that the NEXT run's first
+        // input() would silently swallow.
+        if (Atomics.load(ctrl, CTRL_IO_STATE) !== 1 || Atomics.load(ctrl, CTRL_IO_SEQ) !== pendingSeq) {
+            return;
+        }
+        // Echo through writeOutput so BOTH transcripts end up reading "Enter a num: 42".
+        writeOutput("<p style='display:inline;'>" + escapeConsole(value) + "<br></p>", true);
+        // Both TextEncoder and TextDecoder refuse SharedArrayBuffer-backed views, so
+        // marshal through a normal array and copy across. encodeInto is still worth using:
+        // it never emits a partial UTF-8 sequence, unlike encode()-then-truncate.
+        var tmp = new Uint8Array(IO_LEN);
+        var written = new TextEncoder().encodeInto(String(value), tmp).written;
+        io.set(tmp.subarray(0, written));
+        Atomics.store(ctrl, CTRL_IO_LEN, written);
+        Atomics.store(ctrl, CTRL_IO_STATE, 2);
+        wake();
+    }
+
+    function askInput(seq) {
+        removeInput();
+        pendingSeq = seq;
+        var w = consoleWindow();
+        var el = null;
+        try { el = w.document.getElementById("console"); } catch (e) {}
+        if (!el) {
+            // No console to ask in: EOF, rather than silently feeding an empty line.
+            Atomics.store(ctrl, CTRL_IO_STATE, 3);
+            wake();
+            return;
+        }
+
+        var field = w.document.createElement("input");
+        field.type = "text";
+        field.className = "consoleInput";
+        field.setAttribute("autocomplete", "off");
+        field.setAttribute("spellcheck", "false");
+        field.addEventListener("keydown", function (ev) {
+            if (ev.key === "Enter") { ev.preventDefault(); submitInput(field.value); }
+            else if (ev.key === "Escape") { ev.preventDefault(); removeInput(); stop(); }
+        });
+
+        el.appendChild(field);
+        el.scrollTop = el.scrollHeight;
+        inputEl = field;
+        try { w.focus(); } catch (e) {}
+        field.focus();
     }
 
     // --- control block ------------------------------------------------------
@@ -146,6 +231,7 @@ var PyNodeHost = (function () {
     function play() {
         if (!ready) return;
         try { saveCode(); } catch (e) {}
+        removeInput();
         pending = [];
         writeOutput("", false);
         setState("playing");
@@ -167,6 +253,7 @@ var PyNodeHost = (function () {
     }
 
     function stop() {
+        removeInput();
         signalStop();
         if (!isolated) {
             // Without shared memory the worker cannot see the stop flag, so the only way
@@ -195,10 +282,12 @@ var PyNodeHost = (function () {
         var ctrlBuf = new Buf(CTRL_LEN * 4);
         var posBuf = new Buf(POS_LEN * 8);
         var intBuf = new Buf(1);
+        var ioBuf = new Buf(IO_LEN);
         ctrl = new Int32Array(ctrlBuf);
         pos = new Float64Array(posBuf);
         interrupt = new Uint8Array(intBuf);
-        return { ctrl: ctrlBuf, pos: posBuf, interrupt: intBuf };
+        io = new Uint8Array(ioBuf);
+        return { ctrl: ctrlBuf, pos: posBuf, interrupt: intBuf, io: ioBuf };
     }
 
     function spawn() {
@@ -210,9 +299,9 @@ var PyNodeHost = (function () {
             } else if (m.t === "ready") {
                 ready = true;
                 setState("idle");
-                writeOutput("<p style='color:green;'>Ready (Python " + m.python + ")</p>", false);
+                writeOutput("<p style='color:var(--c-ok);'>Ready (Python " + m.python + ")</p>", false);
                 if (!isolated) {
-                    writeOutput("<p style='color:#a06000;'>Reduced-performance mode: " +
+                    writeOutput("<p style='color:var(--c-warn);'>Reduced-performance mode: " +
                         "cross-origin isolation unavailable.</p>", true);
                 }
                 registerClicks();
@@ -222,9 +311,9 @@ var PyNodeHost = (function () {
             } else if (m.t === "done") {
                 var tail = [];
                 if (m.result === "ok") {
-                    tail.push(["print", ["<p style='display:inline;color:green;'>Done<br></p>"]]);
+                    tail.push(["print", ["<p style='display:inline;color:var(--c-ok);'>Done<br></p>"]]);
                 } else if (m.result === "stopped") {
-                    tail.push(["print", ["<p style='display:inline;color:#a06000;'>Stopped<br></p>"]]);
+                    tail.push(["print", ["<p style='display:inline;color:var(--c-warn);'>Stopped<br></p>"]]);
                 }
                 tail.push(["__state", ["idle"]]);
                 enqueue(tail);
@@ -232,13 +321,13 @@ var PyNodeHost = (function () {
                 setState("idle");
             } else if (m.t === "error") {
                 enqueue([
-                    ["print", ["<p style='display:inline;color:red;'>" + m.message + "<br></p>"]],
+                    ["print", ["<p style='display:inline;color:var(--c-err);'>" + m.message + "<br></p>"]],
                     ["__state", ["idle"]]
                 ]);
             }
         };
         worker.onerror = function (e) {
-            writeOutput("<p style='color:red;'>Worker failed: " + (e.message || "(no message)") + "</p>", true);
+            writeOutput("<p style='color:var(--c-err);'>Worker failed: " + (e.message || "(no message)") + "</p>", true);
             setState("idle");
         };
     }

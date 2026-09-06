@@ -8,11 +8,11 @@
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <script src="coi-serviceworker.js"></script>
     <!-- Apply a stored theme before the stylesheet paints, so there is no flash of the
-         wrong colours. Deliberately only writes the attribute when the user has chosen:
-         while it is absent, prefers-color-scheme resolves natively in CSS. -->
+         wrong colours. Only writes the attribute when the user has chosen; while it is
+         absent the stylesheet default applies, which is dark. -->
     <script>(function(){try{var t=localStorage.getItem("pynode-theme");if(t==="dark"||t==="light")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
-    <link href="css/style.css?version=0.9.10" rel="stylesheet" type="text/css">
-    <script src="js/pynode_theme.js?version=0.9.10"></script>
+    <link href="css/style.css?version=0.9.13" rel="stylesheet" type="text/css">
+    <script src="js/pynode_theme.js?version=0.9.11"></script>
     <link rel="icon" type="image/x-icon" href="favicon.ico">
 </head>
 

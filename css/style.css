@@ -1,23 +1,60 @@
 /* THEME TOKENS
    ==================================================
-   Light values are the defaults, so light mode is pixel-identical to before theming.
+   DARK IS THE DEFAULT. The base :root block is the dark palette; light applies only when
+   the user has explicitly chosen it. prefers-color-scheme is deliberately NOT consulted,
+   so a first visit is dark regardless of the visitor's OS setting.
 
-   The dark block is written twice on purpose. Plain CSS has no way to alias a
-   declaration block, and the two selectors mean different things:
-     - the media query is the FIRST-VISIT default, guarded by :not([data-theme="light"])
-       so that an explicit light choice still beats a dark OS setting;
-     - the attribute selector is an EXPLICIT choice and must win in both directions.
-   Get that guard wrong and choosing light on a dark desktop silently does nothing.
+   Because "dark" is now simply the absence of a choice, every dark-only rule in this file
+   is written as :root:not([data-theme="light"]) - one guard direction throughout, and no
+   duplicated declaration blocks.
 
-   --bg-canvas is deliberately NOT redeclared in the dark block. Node and edge colours
-   come from Color.DARK_GREY / Color.LIGHT_GREY in the frozen pynode_graphlib.py, so a
-   dark graph canvas would destroy their contrast. In dark mode the Output panel is a
-   light rectangle inside dark chrome. That is intentional - please don't "fix" it. */
+   To go back to following the OS instead: put the light values on bare :root, wrap the
+   dark values in @media (prefers-color-scheme: dark) guarded by
+   :root:not([data-theme="light"]), and repeat them under :root[data-theme="dark"].
+
+   --bg-canvas is the same in both palettes on purpose. Node and edge colours come from
+   Color.DARK_GREY / Color.LIGHT_GREY in pynode_graphlib.py, so a dark graph
+   canvas would destroy their contrast. In dark mode the Output panel is a light rectangle
+   inside dark chrome. That is intentional - please don't "fix" it. */
 
 :root {
     /* Tells the browser to render native widgets - inputs, buttons, scrollbars -
-       in the matching scheme. Without this the gist field and Load button stay
-       light-mode white on a dark page. */
+       in the matching scheme. Without this, native form controls (such as the field
+       the console injects for input()) stay light-mode white on a dark page. */
+    color-scheme: dark;
+
+    --bg-page: #0e0e10;
+    --bg-body: #141416;
+    --bg-app: #1b1b1d;
+    --bg-panel: #1e1e1e;
+    --bg-inset: #252526;
+    --bg-chrome: #2d2d30;
+    --bg-button: #3a3a3d;
+    --bg-button-live: #4a4a4f;
+    --bg-chip: #37373a;
+    --bg-canvas: #FFFFFF;
+
+    --border: #3f3f46;
+    --rule: #3f3f46;
+    --divider-dark: #1a1a1c;
+    --divider-light: #4a4a50;
+
+    --text: #e6e6e6;
+    --text-invert: #ffffff;
+    --text-muted: #8a8a8a;
+    --link: #4ec9b0;
+
+    --shadow: rgba(0, 0, 0, 0.6);
+    --shadow-soft: rgba(0, 0, 0, 0.5);
+    --shadow-strong: rgba(0, 0, 0, 0.85);
+    --shadow-mid: rgba(0, 0, 0, 0.7);
+
+    --c-ok: #6dd36d;
+    --c-err: #ff6b6b;
+    --c-warn: #e0a030;
+}
+
+:root[data-theme="light"] {
     color-scheme: light;
 
     --bg-page: #525252;
@@ -49,72 +86,6 @@
     --c-ok: green;
     --c-err: red;
     --c-warn: #a06000;
-}
-
-@media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) {
-        color-scheme: dark;
-        --bg-page: #0e0e10;
-        --bg-body: #141416;
-        --bg-app: #1b1b1d;
-        --bg-panel: #1e1e1e;
-        --bg-inset: #252526;
-        --bg-chrome: #2d2d30;
-        --bg-button: #3a3a3d;
-        --bg-button-live: #4a4a4f;
-        --bg-chip: #37373a;
-
-        --border: #3f3f46;
-        --rule: #3f3f46;
-        --divider-dark: #1a1a1c;
-        --divider-light: #4a4a50;
-
-        --text: #e6e6e6;
-        --text-invert: #ffffff;
-        --text-muted: #8a8a8a;
-        --link: #4ec9b0;
-
-        --shadow: rgba(0, 0, 0, 0.6);
-        --shadow-soft: rgba(0, 0, 0, 0.5);
-        --shadow-strong: rgba(0, 0, 0, 0.85);
-        --shadow-mid: rgba(0, 0, 0, 0.7);
-
-        --c-ok: #6dd36d;
-        --c-err: #ff6b6b;
-        --c-warn: #e0a030;
-    }
-}
-
-:root[data-theme="dark"] {
-    color-scheme: dark;
-    --bg-page: #0e0e10;
-    --bg-body: #141416;
-    --bg-app: #1b1b1d;
-    --bg-panel: #1e1e1e;
-    --bg-inset: #252526;
-    --bg-chrome: #2d2d30;
-    --bg-button: #3a3a3d;
-    --bg-button-live: #4a4a4f;
-    --bg-chip: #37373a;
-
-    --border: #3f3f46;
-    --rule: #3f3f46;
-    --divider-dark: #1a1a1c;
-    --divider-light: #4a4a50;
-
-    --text: #e6e6e6;
-    --text-invert: #ffffff;
-    --text-muted: #8a8a8a;
-    --link: #4ec9b0;
-
-    --shadow: rgba(0, 0, 0, 0.6);
-    --shadow-soft: rgba(0, 0, 0, 0.5);
-    --shadow-strong: rgba(0, 0, 0, 0.85);
-    --shadow-mid: rgba(0, 0, 0, 0.7);
-
-    --c-ok: #6dd36d;
-    --c-err: #ff6b6b;
-    --c-warn: #e0a030;
 }
 
 html {
@@ -615,54 +586,22 @@ body.pynode .pynodeSubtitle {
 }
 
 body.pynode .pynodeAuthorSubtitle {
-    height: 20px;
+    /* Indent past the floated logo explicitly instead of relying on line-box wrapping.
+       The second line sits below the logo's bottom edge, so it stops wrapping and snaps
+       back to the left. 135px == .pynodeLogo width, so this matches the title's edge. */
+    margin-left: 135px;
+    height: auto;        /* was 20px - only ever fit one line */
     padding-bottom: 10px;
+}
+
+body.pynode .pynodeAuthorSubtitle h5 {
+    line-height: 1.6;
 }
 
 body.pynode .pynodeDescription {
     height: 50px;
 }
 
-body.pynode .pynodeDownloadBox {
-    float: left;
-    width: 100%;
-    height: 50px;
-    padding-bottom: 10px;
-}
-body.pynode .pynodeDownloadBoxLinux {
-    float: left;
-    width: 100%;
-    height: 70px;
-    padding-bottom: 5px;
-}
-
-body.pynode .pynodeDownloadBoxIcon {
-    float: left;
-    height: 50px;
-    width: 60px;
-}
-body.pynode .pynodeDownloadBoxIconLinux {
-    float: left;
-    height: 50px;
-    margin-left: -12px;
-    width: 72px;
-}
-
-body.pynode .pynodeDownloadBoxTextWin {
-    float: left;
-    padding-top: 3px;
-    height: 50px;
-}
-body.pynode .pynodeDownloadBoxTextMac {
-    float: left;
-    padding-top: 16px;
-    height: 50px;
-}
-body.pynode .pynodeDownloadBoxTextLinux {
-    float: left;
-    padding-top: 24px;
-    height: 50px;
-}
 
 body.pynode code {
     font-family: monospace;
@@ -766,29 +705,20 @@ body.pynode_output #run, body.pynode_output #stop, body.pynode_output #restart {
     fill: currentColor;
 }
 
-/* Which glyph shows is pure CSS, using the same guard as the tokens, so it tracks the OS
-   preference with no JavaScript when the user has not chosen explicitly. */
-.themeToggle .iconMoon { display: none; }
+/* Which glyph shows is pure CSS. Dark is the default, so the moon is the default glyph
+   and the sun appears only under an explicit light choice. */
+.themeToggle .iconSun { display: none; }
+.themeToggle .iconMoon { display: inline; }
 
-@media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) .themeToggle .iconSun { display: none; }
-    :root:not([data-theme="light"]) .themeToggle .iconMoon { display: inline; }
+:root[data-theme="light"] .themeToggle .iconSun { display: inline; }
+:root[data-theme="light"] .themeToggle .iconMoon { display: none; }
 
-    /* play/pause/stop/restart/resize/import/save are white glyphs on transparent and
-       already read correctly on dark chrome. These three do not: */
-    :root:not([data-theme="light"]) .layoutButtonOn img,
-    :root:not([data-theme="light"]) .layoutButtonOff img { filter: brightness(1.8); }
-    /* logo.png is black artwork on an OPAQUE white square: invert makes it white-on-black,
-       then screen against the dark panel drops the black away, leaving just the glyph. */
-    :root:not([data-theme="light"]) .pynodeLogo img { filter: invert(1); mix-blend-mode: screen; }
-    :root:not([data-theme="light"]) .pynodeDownloadBoxIcon img,
-    :root:not([data-theme="light"]) .pynodeDownloadBoxIconLinux img { filter: invert(1); }
-}
+/* Raster fixes for dark chrome. play/pause/stop/restart/resize/import/save are white
+   glyphs on transparent and already read correctly, so they are left alone. These do not: */
+:root:not([data-theme="light"]) .layoutButtonOn img,
+:root:not([data-theme="light"]) .layoutButtonOff img { filter: brightness(1.8); }
 
-:root[data-theme="dark"] .themeToggle .iconSun { display: none; }
-:root[data-theme="dark"] .themeToggle .iconMoon { display: inline; }
-:root[data-theme="dark"] .layoutButtonOn img,
-:root[data-theme="dark"] .layoutButtonOff img { filter: brightness(1.8); }
-:root[data-theme="dark"] .pynodeLogo img { filter: invert(1); mix-blend-mode: screen; }
-:root[data-theme="dark"] .pynodeDownloadBoxIcon img,
-:root[data-theme="dark"] .pynodeDownloadBoxIconLinux img { filter: invert(1); }
+/* logo.png is black artwork on an OPAQUE white square: invert makes it white-on-black,
+   then screen against the dark panel drops the black away, leaving just the glyph. */
+:root:not([data-theme="light"]) .pynodeLogo img { filter: invert(1); mix-blend-mode: screen; }
+

@@ -10,11 +10,11 @@
          Service-Worker-Allowed header needed to widen it. No ?version= so the SW URL stays stable. -->
     <script src="coi-serviceworker.js"></script>
     <!-- Apply a stored theme before the stylesheet paints, so there is no flash of the
-         wrong colours. Deliberately only writes the attribute when the user has chosen:
-         while it is absent, prefers-color-scheme resolves natively in CSS. -->
+         wrong colours. Only writes the attribute when the user has chosen; while it is
+         absent the stylesheet default applies, which is dark. -->
     <script>(function(){try{var t=localStorage.getItem("pynode-theme");if(t==="dark"||t==="light")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
-    <link href="css/style.css?version=0.9.10" rel="stylesheet" type="text/css">
-    <script src="js/pynode_theme.js?version=0.9.10"></script>
+    <link href="css/style.css?version=0.9.13" rel="stylesheet" type="text/css">
+    <script src="js/pynode_theme.js?version=0.9.11"></script>
     <link rel="icon" type="image/x-icon" href="favicon.ico">
     <script src="js/resize.js?version=0.9.7"></script>
     <script src="js/d3_controls.js?version=0.9.7"></script>
@@ -124,99 +124,6 @@
                 }
             };
             client.send();
-        } else if (searchParams.get("gist")) {
-
-            read_storage = false;
-
-            // Get the gist id from the url search params
-            const gist_slug = searchParams.get("gist");
-
-            console.log("Gist parameter found, value: " + gist_slug);
-
-            // localStorage.setItem("code", "");
-
-            // Should be in the form username-gistid
-            // e.g. jdoe-83efe8c19b9dd6489167e67464030d04
-            if (gist_slug.includes("-") && gist_slug.split("-")[1].length === 32) {
-
-                console.log("Gist slug seems to be valid, fetching...");
-
-                // Fetch the raw content of the gist
-                fetch(`https://gist.githubusercontent.com/${gist_slug.replace("-", "/")}/raw`).then(r => {
-
-                    console.log("Response status: " + r.status);
-
-                    if (r.status == 200) {
-                        // localStorage.setItem("code", "");
-                        return r.text()
-                    } else {
-                        read_storage = true;
-                        if (editor_exists) {
-                            loadCode("# Couldn't load gist  (http != 200).\n# Please try again later.\n\n")
-                        }
-                        return null;
-                    }
-
-                }).then(t => {
-                    if (t) {
-
-                        console.log("Gist content fetched, setting code...");
-
-                        // Add a small prefix to inform the user whether the gist was loaded from the server or from local storage
-                        editor_text = `# Content loaded from Github gist on ${new Date().toLocaleString()}\n# https://gist.github.com/${gist_slug.replace("-", "/")}\n\n${t}`;
-
-                        console.log(editor_text);
-
-                        if (editor_exists) {
-                            applyCode(editor_text);
-                            saveCode();
-                        } else {
-
-                            console.log("The editor hasn't loaded yet. Retrying every second.");
-
-                            window.loadInGistInterval = setInterval(() => {
-                                if (editor_exists) {
-                                    console.log("The editor loaded, setting code...");
-                                    applyCode(editor_text);
-                                    saveCode();
-                                    clearInterval(window.loadInGistInterval);
-                                } else {
-                                    console.log("The editor hasn't loaded yet.");
-                                }
-                            }, 100);
-
-                        }
-                    }
-                }).catch(e => {
-
-                    read_storage = true;
-                    if (editor_exists) {
-                        loadCode("# Couldn't load gist (fetch error).\n# Please try again later.\n\n")
-                    }
-
-                });
-
-            } else {
-                read_storage = true;
-                if (editor_exists) {
-                    loadCode("# Couldn't load gist (invalid gist slug).\n# Please try again later.\n\n")
-                }
-            }
-
-        }
-
-        // var url = window.location.href;
-        // var newUrl = url.substring(url.lastIndexOf('/') + 1).split("?")[0];
-        // window.history.pushState("object or string", "Title", "" + newUrl);
-
-        function loadGistFromUrl() {
-
-            const url = document.getElementById("gisturl").value;
-            const slug = url.replace("https://gist.github.com/", "").replace("/", "-");
-
-            const newUrl = `${location.href.replace(window.location.search,"")}?gist=${slug}`;
-            window.location.href = newUrl;
-
         }
 
     </script>
@@ -227,13 +134,14 @@
     <div class="pageWholeWrapper">
         <div class="pageTopWrapper">
             <div class="pageTop">
-                <div class="pynodeLogo"><img src="images/logo.png" width="120" height="120"></div>
+                <div class="pynodeLogo"><img src="images/logo.png" width="140" height="140"></div>
                 <div class="pynodeTitle">PyNode</div>
                 <div class="pynodeSubtitle">
                     <h3>Graph Theory Visualizer</h3>
                 </div>
                 <div class="pynodeAuthorSubtitle">
                     <h5>By <a href="https://github.com/alexsocha">Alex Socha</a></h5>
+                    <h5>Updated editor and pyodide integration by <a href="https://github.com/toanh">Toan Huynh</a> with assistance from <a href="https://claude.ai">Anthropic Claude</a></h5>
                 </div>
                 <div class="pynodeDescription">
                     <p>PyNode allows you to create, animate and display graphs with a simple Python interface, all
@@ -256,11 +164,6 @@
                         </li>
                         <li>
                             <p><a href="#" onclick="openCode('tictactoe'); return false;">Tic Tac Toe</a></p>
-                        </li>
-                        <li>
-                            <p>
-                                Import Github Gist (<a href="#gisthelp">info and help</a>) :  <input type="url" id="gisturl" placeholder="https://gist.github.com/username/83efe8c19b9dd6489167e67464030d04" /> <button onclick="loadGistFromUrl()">Load</button>
-                            </p>
                         </li>
                     </ul>
 
@@ -656,87 +559,11 @@
                     </li>
                 </ul>
 
-                <p>&nbsp;</p>
-
-                <h2 id="gisthelp">Publishing via Github Gists</h2>
-                <br/>
-                <p>
-                    You can load a PyNode script from Github's gists service. Gists are snippets of text or files that are public and stored on Github.
-                    They are useful for sharing small files with people. PyNode can load your script from a Gist so that you can just send somebody a link to show them a graph.
-                </p>
-
-                <br/>
-
-                <p>
-                    Below are instructions for uploading your PyNode script to Github and then using it.
-                </p>
-
-                <p>
-                    <ol>
-                        <li>
-                            Create a new Gist. If you have a Github account, <a href="https://gist.new" target="_blank">click here</a> to create a new Gist. If not, <a href=""https://github.com/join?return_to=https://gist.github.com/new&source=header-gist" target="_blank">click here</a> to sign up and create one.
-                        </li>
-
-                        <li>
-                            Paste your PyNode script here and press the "Save" button.
-                        </li>
-
-                        <li>
-                            Copy the URL of the page that you are taken to after you save your Gist.
-                        </li>
-
-                        <li>
-                            Enter the URL on the PyNode homepage and click 'Load'
-                        </li>
-
-                        <li>
-                            You should be taken to a page that shows the graph that you just created.
-                        </li>
-                    </ol>
-                </p>
-
-                <p>
-                    <b>Note</b>: This is not a two-way sync. If you edit the script in PyNode, the Gist will not be updated. You will need to update it within Github. Gists are more for publishing your script over saving it.
-                </p>
-
-            </div>
-            <div class="pageWhole" id="download">
-                <h1>Download</h1>
-                <p>&nbsp;</p>
-                <p>Download the offline version of PyNode below.</p>
-                <p>&nbsp;</p>
-                <p>&nbsp;</p>
-                <div class="pynodeDownloadBox">
-                    <div class="pynodeDownloadBoxIcon"><img src="images/download/windows.svg" width="45"
-                                                            height="45"></div>
-                    <div class="pynodeDownloadBoxTextWin">
-                        <a href="offline_downloads/pynode_win64.zip">Download PyNode for Windows 64-bit</a>
-                        <p class="pageTextGap">&nbsp</p>
-                        <a href="offline_downloads/pynode_win32.zip">Download PyNode for Windows 32-bit</a>
-                    </div>
-                </div>
-                <div class="pynodeDownloadBox">
-                    <div class="pynodeDownloadBoxIcon"><img src="images/download/mac.svg" width="45" height="45">
-                    </div>
-                    <div class="pynodeDownloadBoxTextMac">
-                        <a href="offline_downloads/pynode_macosx.zip">Download PyNode for macOS</a>
-                    </div>
-                </div>
-                <div class="pynodeDownloadBoxLinux">
-                    <div class="pynodeDownloadBoxIconLinux"><img src="images/download/linux.svg" width="70"
-                                                                 height="70">
-                    </div>
-                    <div class="pynodeDownloadBoxTextLinux">
-                        <a href="offline_downloads/pynode_linux.zip">Download PyNode for Linux</a>
-                    </div>
-                </div>
-                <p>&nbsp;</p>
-                <p>Once downloaded, unzip the archive and run demo.py.</p>
             </div>
             <div class="pageWhole">
                 <h1>About</h1>
                 <p>&nbsp;</p>
-                <p>PyNode was designed and created by <a href="https://github.com/alexsocha">Alex Socha</a>, using the following technologies:</p>
+                <p>PyNode was designed and created by <a href="https://github.com/alexsocha">Alex Socha</a> with updates by <a href="https://github.com/toanh">Toan Huynh</a>, using the following technologies:</p>
                 <ul>
                     <li>
                         <p><a href="http://marvl.infotech.monash.edu/webcola/">WebCola</a> - Monash Adaptive
@@ -766,8 +593,8 @@
 <!-- No ?version= on the AMD base path: Monaco's loader builds child-module URLs from it
      itself and will not propagate a query string. Bump the js/monaco/ directory name instead. -->
 <script src="js/monaco/vs/loader.js"></script>
-<script src="js/pynode_completions.js?version=0.9.10"></script>
-<script src="js/monaco_setup.js?version=0.9.10"></script>
+<script src="js/pynode_completions.js?version=0.9.11"></script>
+<script src="js/monaco_setup.js?version=0.9.11"></script>
 <script>
     resize();
 
@@ -775,7 +602,7 @@
         return window.editor ? window.editor.getValue() : "";
     }
 
-    // Unconditional write, used by the project/gist/file loaders.
+    // Unconditional write, used by the project and file loaders.
     function applyCode(src) {
         if (window.editor) window.editor.setValue(src);
     }
@@ -789,24 +616,22 @@
         localStorage.setItem("code", getCode())
     }
 
-    function loadCode(prefix) {
+    function loadCode() {
         var src = localStorage.getItem("code");
         if (src === null || src === "") {
-            openCode("dijkstra", prefix);
+            openCode("dijkstra");
             return;
         }
-        // Previously the `if (prefix)` branch computed the prefixed string but never
-        // wrote it back, so the gist-error prefix path silently did nothing.
-        applyCode((prefix || "") + src);
+        applyCode(src);
     }
 
-    function openCode(name, prefix) {
+    function openCode(name) {
         var client = new XMLHttpRequest();
         client.open("GET", "pynode_projects/" + name + ".py");
         client.onreadystatechange = function () {
             if (client.readyState == 4) {
                 if (editor_exists) {
-                    applyCode((prefix || "") + client.responseText);
+                    applyCode(client.responseText);
                     saveCode();
                 }
             }
@@ -884,7 +709,7 @@
 <!-- Python now runs as real CPython inside js/pynode_worker.js. The button state machine
      that used to live in pynode_core.py (driven from Brython via document[...].bind) has
      moved into js/pynode_host.js, because a worker has no DOM. -->
-<script src="js/pynode_host.js?version=0.9.10"></script>
+<script src="js/pynode_host.js?version=0.9.11"></script>
 <script>
     // The button background and cursor used to be set here as INLINE styles, which beat
     // any stylesheet rule and made the buttons untouchable by theming. They now live in
@@ -920,8 +745,6 @@
 <a hidden style="display:none" href="pynode_projects/greek_islands.py">&nbsp</a>
 <a hidden style="display:none" href="pynode_projects/prims.py">&nbsp</a>
 <a hidden style="display:none" href="pynode_projects/tictactoe.py">&nbsp</a>
-<a hidden style="display:none" href="offline_downloads/latest_src.zip">&nbsp</a>
-<a hidden style="display:none" href="offline_downloads/latest_version.txt">&nbsp</a>
 
 </body>
 </html>

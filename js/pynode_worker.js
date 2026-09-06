@@ -10,7 +10,7 @@
 
 import { loadPyodide } from './pyodide/pyodide.mjs';
 
-const VERSION = '0.9.10';
+const VERSION = '0.9.11';
 const here = (p) => new URL(p, location.href).href;
 
 // --- SAB layout. Must match js/pynode_host.js exactly. ---
@@ -168,9 +168,9 @@ async function boot(buffers) {
     pyodide.setInterruptBuffer(interrupt);
     pyodide.setStdin({ stdin: stdin, isatty: false });
 
-    // Fetch the two .py files rather than bundling them: they stay on disk at the repo
-    // root, where the crawler anchors at the end of index.html still point, and they stay
-    // byte-diffable against offline_src/pynode/src/.
+    // Fetch the two .py files rather than bundling them, so they stay readable on disk at
+    // the repo root - where the crawler anchors at the end of index.html still point -
+    // and can be edited without touching any JavaScript.
     const [coreSrc, libSrc] = await Promise.all([
         fetch(here('../pynode_core.py?version=' + VERSION)).then(r => r.text()),
         fetch(here('../pynode_graphlib.py?version=' + VERSION)).then(r => r.text()),

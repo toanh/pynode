@@ -1,17 +1,47 @@
-name: CI
+name: Deploy to GitHub Pages
+
 on:
-  - push
-  - pull_request
+  push:
+    branches: [main]
+  workflow_dispatch:        # lets you redeploy by hand from the Actions tab
+
+# Declared here rather than relying on repo settings: new repos default
+# GITHUB_TOKEN to read-only, which is what silently breaks most Pages deploys.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
 jobs:
-  ci:
-    concurrency: ci-${{ github.ref }}
+  deploy:
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v2
-      - name: Deploy to gh-pages
-        if: github.ref == 'refs/heads/master'
-        uses: JamesIves/github-pages-deploy-action@v4.2.3
+      - uses: actions/checkout@v4
+
+      - uses: actions/configure-pages@v5
+
+      # Stage the site so tests/ and CI config are not published.
+      # Drop this step and point upload-pages-artifact at "." to publish everything.
+      - name: Stage site
+        run: |
+          mkdir -p _site
+          rsync -a \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='tests' \
+            --exclude='_site' \
+            ./ _site/
+
+      - uses: actions/upload-pages-artifact@v3
         with:
-          branch: gh-pages
-          folder: .
+          path: _site
+
+      - id: deployment
+        uses: actions/deploy-pages@v4

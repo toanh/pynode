@@ -37,12 +37,11 @@ var PyNodeTheme = (function () {
           '<path class="iconMoon" d="M21 13.2A9 9 0 1 1 10.8 3a7.2 7.2 0 0 0 10.2 10.2z"/>' +
         '</svg>';
 
+    // Dark is the default: no explicit choice means dark, matching the CSS, which puts the
+    // dark palette on bare :root and only swaps to light under [data-theme="light"].
+    // The OS preference is deliberately not consulted.
     function resolved() {
-        var t = document.documentElement.getAttribute("data-theme");
-        if (t === "dark" || t === "light") return t;
-        try {
-            return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-        } catch (e) { return "light"; }
+        return document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
     }
 
     // Monaco is the one piece that cannot read CSS custom properties.
@@ -105,13 +104,9 @@ var PyNodeTheme = (function () {
             };
         } catch (e) {}
 
-        // With no explicit choice the CSS re-resolves on its own when the OS flips;
-        // only Monaco needs to be told.
-        try {
-            window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
-                if (!document.documentElement.getAttribute("data-theme")) applyMonaco(resolved());
-            });
-        } catch (e) {}
+        // Monaco cannot read CSS custom properties, and on a first visit no attribute has
+        // been written yet, so tell it the default explicitly.
+        applyMonaco(resolved());
 
         if (document.readyState === "loading") {
             document.addEventListener("DOMContentLoaded", injectToggle);

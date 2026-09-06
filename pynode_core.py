@@ -1,12 +1,9 @@
-# PyNode core - online version.
+# PyNode core.
 #
-# Runs inside a Pyodide (real CPython) module worker. This file is the only portability
-# seam: pynode_graphlib.py is written entirely against it, and is byte-identical to the
-# offline copy apart from its import line.
-#
-# Compare offline_src/pynode/src/pynode_core.py, which implements this same seam over a
-# stdin/stdout pipe to a CEF process. That version already had the blocking model this
-# one now uses; the two have converged rather than drifted further apart.
+# Runs inside a Pyodide (real CPython) module worker. This file is the seam:
+# pynode_graphlib.py is written entirely against it and knows nothing about the browser,
+# which is what let the runtime be swapped from Brython to Pyodide by rewriting one file
+# rather than the whole API. Keep that separation.
 #
 # Execution model: user code runs to completion in the worker, blocking for real on
 # pause(). Commands are emitted immediately, so the main thread renders live.
@@ -51,7 +48,7 @@ class PynodeCoreGlobals:
     event_queue = []
 
     # Cooperative timer wheel. Pyodide has no working threading.Thread, so delay() and
-    # set_interval() cannot use the offline core's threads - nothing fires on its own,
+    # set_interval() cannot be backed by real timers - nothing fires on its own,
     # service() drives everything.
     timers = {}                    # id -> [due_ms, func, period_ms or None]
     delay_type = {}                # id -> 1 interval / 0 timeout   (read by graphlib)

@@ -5,7 +5,8 @@
 // has to change:
 //   editor         - facade with getValue/setValue/on, because pynode_editor.html and
 //                    pynode_output.html reach across windows via window.opener.editor
-//   editor_exists  - the ?gist= / ?project= head scripts poll this on a 100ms interval
+//   editor_exists  - readiness flag; the ?project= head script and the beforeunload
+//                    save check it, since both can run before Monaco exists
 //   enable_editor  - reentrancy guard for cross-window sync
 //   getCode / setCode / saveCode / loadCode / openCode
 

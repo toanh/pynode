@@ -3,8 +3,7 @@
 // Owns the single worker, applies its command stream to the renderer, routes console
 // output, and drives the run/stop/pause/restart button state machine. That state machine
 // used to live in pynode_core.py and manipulate the DOM through Brython; Pyodide runs in
-// a worker with no DOM, so it moves here - exactly as the offline build already does it
-// in JavaScript.
+// a worker with no DOM, so it has to live on this side.
 //
 // Pacing is no longer done here. The worker blocks for real on pause() and flushes a
 // batch of commands just before each sleep, so batches are applied as they arrive.
@@ -12,7 +11,7 @@
 var PyNodeHost = (function () {
     "use strict";
 
-    var VERSION = "0.9.10";
+    var VERSION = "0.9.11";
 
     // --- SAB layout. Must match js/pynode_worker.js exactly. ---
     var CTRL_NOTIFY = 0, CTRL_STOP = 1, CTRL_PAUSE = 2, CTRL_CLICK_W = 3, CTRL_CLICK_R = 4;

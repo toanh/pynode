@@ -4,14 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-PyNode is a Graph Theory visualizer: user-written Python drives an animated graph rendered in the browser. It ships in two forms that share the same Python API surface:
+PyNode is a Graph Theory visualizer: user-written Python drives an animated graph rendered in the browser. It is a static site — the root of the repo *is* the deployed site — and user code runs as real CPython (Pyodide) in a web worker.
 
-- **Online version** (repo root) — Python runs in the browser via Brython.
-- **Offline version** (`offline_src/`) — CPython drives a C++/CEF desktop app over stdin/stdout.
+A second form used to exist: a CPython + C++/CEF desktop app under `offline_src/`, distributed as ~171 MB of zips in `offline_downloads/`. **Both are gone.** Anything you find referring to an "offline version", a sync requirement between two copies of a file, or a `latest_src.zip` auto-updater is stale — say so rather than trying to honour it.
 
 ## Build, run, test
 
-There is no build step, package manager, test suite, or linter. The root of the repo *is* the deployed site.
+There is no build step, package manager, or linter for the site itself. The root of the repo *is* the deployed site.
+
+There **is** a browser test suite in `tests/` — see the Tests section below.
 
 - Run locally: serve the repo root over HTTP and open `index.html`. `file://` will not work — the `.py` files and `pynode_projects/*.py` are fetched over HTTP. **Plain `python -m http.server` is not sufficient**: it serves `.mjs` as `text/plain`, which browsers reject for module scripts, and Pyodide's worker then fails with an *empty* error message. Use:
   ```
@@ -54,12 +55,11 @@ Three traps to remember here:
 
 ### The Python ↔ JavaScript bridge
 
-`pynode_core.py` is the only portability seam. `pynode_graphlib.py` is written against it and is byte-identical between online and offline apart from the import line (`import pynode_core` vs `from pynode.src import pynode_core`). **Keep it that way** — it is the contract, not an implementation detail.
+`pynode_core.py` is the seam: `pynode_graphlib.py` is written entirely against it and knows nothing about the browser. Keep that separation — it is what made swapping Brython for Pyodide a rewrite of one file rather than the whole API.
 
-- **Online**: real CPython (Pyodide) runs in [js/pynode_worker.js](js/pynode_worker.js), a **module worker** — Pyodide 0.28+ refuses to run in a classic worker. `pynode_core.py` stays pure Python (it never imports `js`); everything platform-specific arrives through `set_hooks(sink, sleep, poll, read_position)`, so the core can be exercised headlessly. [js/pynode_host.js](js/pynode_host.js) owns the worker and the shared control block, applies the command stream to whichever window holds the live `greuler_instance`, routes console output, and runs the run/stop/pause/restart button state machine. The SAB layout constants are duplicated at the top of both files and **must be kept in step**.
-- **Offline**: the same command names are written to the CEF process's stdin as `pynode:js_foo:[args]` by `offline_src/pynode/src/communicate.py`; responses come back over stdout as `pynode:response:<uuid>:<json>`, matched by request id.
+Real CPython (Pyodide) runs in [js/pynode_worker.js](js/pynode_worker.js), a **module worker** — Pyodide 0.28+ refuses to run in a classic worker. `pynode_core.py` stays pure Python (it never imports `js`); everything platform-specific arrives through `set_hooks(sink, sleep, poll, read_position)`, so the core can be exercised headlessly. [js/pynode_host.js](js/pynode_host.js) owns the worker and the shared control block, applies the command stream to whichever window holds the live `greuler_instance`, routes console output, and runs the run/stop/pause/restart button state machine. The SAB layout constants are duplicated at the top of both files and **must be kept in step**.
 
-The `js_*` string constants at the bottom of both `pynode_core.py` files are the protocol; they must match the function names in `graph_api.js`.
+The `js_*` string constants at the bottom of `pynode_core.py` are the protocol; they must match the function names in `graph_api.js`.
 
 **Two traps that cost real debugging time:**
 
@@ -78,13 +78,29 @@ The `js_*` string constants at the bottom of both `pynode_core.py` files are the
 
 `coi-serviceworker.js` must be the **first** script in every page's `<head>` and must live at the **repo root** — a service worker's scope is its own directory, and GitHub Pages cannot send the `Service-Worker-Allowed` header needed to widen it. It synthesizes the COOP/COEP headers that make `SharedArrayBuffer` available, and reloads the page once on first visit. Same-origin popups receive the same headers, so `window.opener` survives (verified).
 
-Editor state persists in `localStorage` under the key `code`. `?project=<name>` loads from `pynode_projects/`; `?gist=<user>-<gistid>` fetches raw content from gist.githubusercontent.com.
+Editor state persists in `localStorage` under the key `code`, and `?project=<name>` loads from `pynode_projects/`. The site makes no cross-origin requests at all — everything is vendored.
+
+## Tests
+
+`tests/` holds a Playwright suite run by Node's built-in test runner:
+
+```
+cd tests && npm ci && npm test          # ~100s, 36 tests
+npm test -- --test-name-pattern=theme   # filter
+npm test -- ./io.test.mjs               # one file
+```
+
+It starts its own static server, so **no Python and no manually started server**. That server sends COOP/COEP itself, which makes pages isolated on first paint and skips the `coi-serviceworker` reload — a large speed and determinism win. The consequence is that the default path does *not* exercise the service worker, so `isolation.test.mjs` runs against a headerless server to cover the real GitHub Pages path. **Do not skip that file.**
+
+Each test opens a fresh `BrowserContext`: `localStorage` carries the editor contents and the theme between tests, and clean-by-construction beats remembering to clear the right keys.
+
+Set `CHROME_PATH` if Chrome/Edge is not in a standard location.
 
 ## Conventions
 
-- **Keep online and offline in sync — but know which files actually are.** `pynode_graphlib.py`, `js/graph_api.js` and `js/resize.js` are byte-identical to their `offline_src/pynode/src/` counterparts (graphlib bar its import line) and must stay so. `pynode_core.py` is *deliberately* divergent — it is the portability seam, and the two implementations differ by transport. `css/style.css` was already divergent before this work (the offline copy has no `#editor` rules).
-- **Publishing the offline version** (per [offline_src/README.md](offline_src/README.md)): bump `offline_src/pynode/src/version.txt`, zip that `src/` folder to `offline_downloads/latest_src.zip`, and set `offline_downloads/latest_version.txt` to the same number — that is what the in-app auto-updater polls.
-- **Theming**: `css/style.css` defines every colour as a custom property on `:root`, with light as the default. The dark values appear **twice** — once under `@media (prefers-color-scheme: dark)` guarded by `:root:not([data-theme="light"])` (the first-visit default), and once under `:root[data-theme="dark"]` (an explicit choice). Plain CSS cannot alias a declaration block, so the duplication is the honest cost; invert that guard and choosing light on a dark desktop silently does nothing. `js/pynode_theme.js` persists the choice, syncs the four documents over `BroadcastChannel("pynode-theme")`, and drives Monaco (which cannot read custom properties). `:root` also sets `color-scheme`, which is what themes native widgets and scrollbars.
+- **`pynode_graphlib.py` and `js/graph_api.js` are no longer frozen.** They used to be byte-identical to copies under `offline_src/`, so nothing could touch them. That tree is gone and the constraint is lifted. Several awkward workarounds exist purely because of it — most visibly `pynode_core.run_code`, which reimplements `_exec_code` because the frozen version relies on Brython's `locals()` semantics. Those are now fixable at the source if you want.
+- **Theming**: `css/style.css` defines every colour as a custom property. **Dark is the unconditional default** — the dark palette sits on bare `:root`, and light applies only under `:root[data-theme="light"]`. `prefers-color-scheme` is deliberately not consulted, so a first visit is dark whatever the visitor's OS says. Every dark-only rule therefore reads `:root:not([data-theme="light"])`: one guard direction throughout, no duplicated declaration blocks. `js/pynode_theme.js` persists the choice, syncs the four documents over `BroadcastChannel("pynode-theme")`, and drives Monaco (which cannot read custom properties). `:root` also sets `color-scheme`, which is what themes native widgets and scrollbars.
+  To go back to following the OS: put the light values on bare `:root`, wrap the dark values in `@media (prefers-color-scheme: dark)` guarded by `:root:not([data-theme="light"])`, and repeat them under `:root[data-theme="dark"]` — the guard is what lets an explicit light choice beat a dark desktop.
   Two rules: **never set a colour from JavaScript** — an inline style beats the stylesheet and silently defeats the whole system (this is exactly what the old `#6E6E6E` run-button assignments did) — and **`--bg-canvas` stays light in both themes**, because node and edge defaults come from `Color.DARK_GREY` / `Color.LIGHT_GREY` in the frozen `pynode_graphlib.py`.
 - **Cache busting**: first-party script and stylesheet tags carry `?version=0.9.x` query strings. Bump the version on a file's tag in *every* HTML page that references it, or returning users get stale assets. **Two exceptions, both mandatory:**
   - `js/monaco/vs` and `js/pyodide/` must have **no** query string. Monaco's AMD loader and `loadPyodide({indexURL})` construct their own child-module URLs from those base paths and will not propagate one. To bust a vendored library, rename its directory.

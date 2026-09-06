@@ -1,0 +1,14 @@
+{
+  "name": "pynode-tests",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Browser test suite for PyNode. Drives a locally installed Chrome/Edge with Playwright.",
+  "scripts": {
+    "test": "node run.mjs",
+    "screenshots": "node screenshots.mjs"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.62.1"
+  }
+}

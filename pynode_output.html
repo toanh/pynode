@@ -11,8 +11,8 @@
          wrong colours. Only writes the attribute when the user has chosen; while it is
          absent the stylesheet default applies, which is dark. -->
     <script>(function(){try{var t=localStorage.getItem("pynode-theme");if(t==="dark"||t==="light")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
-    <link href="css/style.css?version=0.9.13" rel="stylesheet" type="text/css">
-    <script src="js/pynode_theme.js?version=0.9.11"></script>
+    <link href="css/style.css?version=0.9.14" rel="stylesheet" type="text/css">
+    <script src="js/pynode_theme.js?version=0.9.14"></script>
     <link rel="icon" type="image/x-icon" href="favicon.ico">
     <script src="js/resize.js?version=0.9.7"></script>
     <script src="js/d3_controls.js?version=0.9.7"></script>
@@ -95,21 +95,32 @@
 </script>
 <script>
     // Drive the opener's single worker. Console output is written by the opener.
+    //
+    // Every call passes THIS window as the origin: pressing Play here takes ownership of
+    // the render stream, so the graph is drawn in this window and the opener's embedded
+    // output is blanked. stop/pause/resume ignore the argument.
     function hostCall(fn) {
         try {
-            if (window.opener && window.opener.PyNodeHost) window.opener.PyNodeHost[fn]();
+            if (window.opener && window.opener.PyNodeHost) window.opener.PyNodeHost[fn](window);
         } catch (e) { console.error("PyNode: opener unreachable", e); }
     }
     document.getElementById("run").onclick = function () {
         try {
             var h = window.opener.PyNodeHost, s = h.state();
-            if (s === "idle") h.play();
+            if (s === "idle") h.play(window);
             else if (s === "playing") h.pause();
             else if (s === "paused") h.resume();
         } catch (e) { console.error("PyNode: opener unreachable", e); }
     };
     document.getElementById("stop").onclick = function () { hostCall("stop"); };
     document.getElementById("restart").onclick = function () { hostCall("restart"); };
+
+    // Announce ourselves so the opener can set this window's click listener state. This
+    // does NOT take ownership of the render stream - only pressing Play does, so the
+    // canvas stays blank until then. The opener also assigns an onload handler for this,
+    // but window.open reuses the named window "PyNode Output", so that handler can be
+    // attached too late to ever fire. Both paths are idempotent.
+    hostCall("onRenderTargetChanged");
 </script>
 <script>
     // The button background and cursor used to be set here as INLINE styles, which beat

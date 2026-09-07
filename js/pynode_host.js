@@ -1,9 +1,9 @@
 // PyNode host - main-thread side of the Pyodide worker.
 //
-// Owns the single worker, applies its command stream to the renderer, routes console
-// output, and drives the run/stop/pause/restart button state machine. That state machine
-// used to live in pynode_core.py and manipulate the DOM through Brython; Pyodide runs in
-// a worker with no DOM, so it has to live on this side.
+// Owns the single worker, applies its command stream to the one output window that owns
+// the render stream, routes console output, and drives the run/stop/pause/restart button
+// state machine. That state machine used to live in pynode_core.py and manipulate the DOM
+// through Brython; Pyodide runs in a worker with no DOM, so it has to live on this side.
 //
 // Pacing is no longer done here. The worker blocks for real on pause() and flushes a
 // batch of commands just before each sleep, so batches are applied as they arrive.
@@ -11,7 +11,7 @@
 var PyNodeHost = (function () {
     "use strict";
 
-    var VERSION = "0.9.11";
+    var VERSION = "0.9.14";
 
     // --- SAB layout. Must match js/pynode_worker.js exactly. ---
     var CTRL_NOTIFY = 0, CTRL_STOP = 1, CTRL_PAUSE = 2, CTRL_CLICK_W = 3, CTRL_CLICK_R = 4;
@@ -31,25 +31,83 @@ var PyNodeHost = (function () {
     var pending = [];                // command batches awaiting a frame
     var frameQueued = false;
     var positionsTimer = null;
+    var activeWin = null;            // the window that owns the render stream
 
     // --- render target ------------------------------------------------------
     // The detached output popup owns its own greuler_instance. Every function in
     // graph_api.js closes over its own window's global, so calling it on the popup
     // mutates the popup's graph. No changes to graph_api.js required.
-    function target() {
+    //
+    // EXACTLY ONE window owns the stream at a time, and it is the window whose Play button
+    // was clicked. Rendering to both was tried and reverted: each window runs an
+    // independent WebCola layout at its own canvas size, so the same graph settles into
+    // visibly different positions in each, and the two pictures never agree.
+    //
+    // The window that does NOT own the stream is blanked on Play, so it is unambiguous
+    // which one is live and no stale graph is left to be mistaken for the current run.
+
+    function targets() {
+        var list = [window];
         try {
-            if (typeof pynode_output !== "undefined" && pynode_output && !pynode_output.closed) {
-                return pynode_output;
+            if (typeof pynode_output !== "undefined" && pynode_output &&
+                !pynode_output.closed && pynode_output !== window) {
+                list.push(pynode_output);
             }
         } catch (e) {}
-        return window;
+        return list;
     }
+
+    function activeTarget() {
+        try {
+            if (activeWin && !activeWin.closed) return activeWin;
+        } catch (e) {}
+        return window;   // the owner was closed; fall back rather than render nowhere
+    }
+
+    // `origin` arrives from a button handler, so validate it really is a Window:
+    // init() wires el.onclick directly and click handlers are called with the DOM event
+    // as their first argument. Only a Window self-references through .window.
+    function setActive(origin) {
+        var next = window;
+        try {
+            if (origin && origin.window === origin && !origin.closed) next = origin;
+        } catch (e) {}
+        targets().forEach(function (t) {
+            if (t === next) return;
+            try { if (typeof t.js_clear === "function") t.js_clear(); } catch (e) {}
+        });
+        activeWin = next;
+        registerClicks();
+    }
+
+    // Bind one output window's run/stop/restart buttons, capturing that window as the
+    // origin. Done from here rather than trusting each page's own inline handlers: HTML
+    // pages carry no ?version=, so a returning browser can keep a stale pynode_output.html
+    // indefinitely - and a stale copy calls play() with no origin, which silently routes
+    // the run to the main page. This file IS versioned, so binding from here always wins.
+    function bindButtons(t) {
+        try {
+            var handlers = {
+                run: function () { onRunClick(t); },
+                stop: function () { stop(); },
+                restart: function () { restart(t); }
+            };
+            Object.keys(handlers).forEach(function (id) {
+                var el = t.document.getElementById(id);
+                if (el) el.onclick = handlers[id];
+            });
+        } catch (e) {}
+    }
+
+    function bindAllButtons() { targets().forEach(bindButtons); }
 
     function applyOne(t, name, args) {
         try {
             if (name === "print") { writeOutput(args[0], true); return; }
             // Synthetic commands, so end-of-run effects stay ordered behind the commands
             // still waiting for a frame - otherwise "Done" prints before the last output.
+            // Handled by the host, not the render target: there is one console, one button
+            // state machine and one pending input() field whichever window is drawing.
             if (name === "__state") { setState(args[0]); return; }
             if (name === "__input") { askInput(args[0]); return; }
             if (typeof t[name] === "function") t[name].apply(t, args);
@@ -60,7 +118,7 @@ var PyNodeHost = (function () {
 
     function applyFrame() {
         frameQueued = false;
-        var t = target();
+        var t = activeTarget();
         var batches = pending;
         pending = [];
         for (var b = 0; b < batches.length; b++) {
@@ -179,7 +237,7 @@ var PyNodeHost = (function () {
 
     function pushPositions() {
         if (!pos) return;
-        var t = target();
+        var t = activeTarget();
         try {
             var g = t.greuler_instance;
             if (!g || !g.graph || !g.graph.nodes) return;
@@ -199,19 +257,14 @@ var PyNodeHost = (function () {
 
     // --- button state machine ----------------------------------------------
     function show(id) {
-        ["runPlay", "runPlayLoad", "runPause", "runResume"].forEach(function (k) {
-            var el = document.getElementById(k);
-            if (el) el.style.display = (k === id) ? "inherit" : "none";
-        });
-        var t = target();
-        if (t !== window) {
+        targets().forEach(function (t) {
             try {
                 ["runPlay", "runPlayLoad", "runPause", "runResume"].forEach(function (k) {
                     var el = t.document.getElementById(k);
                     if (el) el.style.display = (k === id) ? "inherit" : "none";
                 });
             } catch (e) {}
-        }
+        });
     }
 
     function setState(s) {
@@ -220,19 +273,22 @@ var PyNodeHost = (function () {
            : s === "paused" ? "runResume" : "runPlayLoad");
     }
 
-    function onRunClick() {
+    function onRunClick(origin) {
         if (!ready) return;
-        if (state === "idle") play();
+        if (state === "idle") play(origin);
         else if (state === "playing") pause();
         else if (state === "paused") resume();
     }
 
-    function play() {
+    // `origin` is the window whose Play button was clicked; it takes ownership of the
+    // render stream and every other output window is blanked. Omitted means the main page.
+    function play(origin) {
         if (!ready) return;
         try { saveCode(); } catch (e) {}
         removeInput();
         pending = [];
         writeOutput("", false);
+        setActive(origin);
         setState("playing");
         pushPositions();
         worker.postMessage({ t: "run", src: getCode() });
@@ -264,15 +320,25 @@ var PyNodeHost = (function () {
         setState("idle");
     }
 
-    function restart() { stop(); setTimeout(play, isolated ? 80 : 1200); }
+    // The origin has to travel in a closure: setTimeout(play, ...) passes no arguments.
+    function restart(origin) {
+        stop();
+        setTimeout(function () { play(origin); }, isolated ? 80 : 1200);
+    }
 
+    // Clicks follow ownership. registerClickListener assigns its parameter to a
+    // window-local clickListener and clickNode guards with `!== undefined`, so a bare call
+    // DISABLES the listener - which is what the inactive window needs. Leaving it live
+    // there let a click on a stale graph feed a bogus node id to the running program.
     function registerClicks() {
-        var t = target();
-        try {
-            if (typeof t.registerClickListener === "function") {
-                t.registerClickListener(function (nodeId) { pushClick(nodeId); });
-            }
-        } catch (e) {}
+        var active = activeTarget();
+        targets().forEach(function (t) {
+            try {
+                if (typeof t.registerClickListener !== "function") return;
+                if (t === active) t.registerClickListener(function (nodeId) { pushClick(nodeId); });
+                else t.registerClickListener();
+            } catch (e) {}
+        });
     }
 
     // --- boot ---------------------------------------------------------------
@@ -303,6 +369,7 @@ var PyNodeHost = (function () {
                     writeOutput("<p style='color:var(--c-warn);'>Reduced-performance mode: " +
                         "cross-origin isolation unavailable.</p>", true);
                 }
+                bindAllButtons();   // covers a popup opened before the worker finished booting
                 registerClicks();
                 if (positionsTimer === null) positionsTimer = setInterval(pushPositions, 100);
             } else if (m.t === "events") {
@@ -344,11 +411,7 @@ var PyNodeHost = (function () {
         writeOutput("<p>Loading Python...</p>", false);
         spawn();
 
-        ["run", "stop", "restart"].forEach(function (id) {
-            var el = document.getElementById(id);
-            if (!el) return;
-            el.onclick = (id === "run") ? onRunClick : (id === "stop" ? stop : restart);
-        });
+        bindAllButtons();
     }
 
     return {
@@ -357,6 +420,9 @@ var PyNodeHost = (function () {
         isReady: function () { return ready; },
         state: function () { return state; },
         isIsolated: function () { return isolated; },
-        onRenderTargetChanged: function () { registerClicks(); }
+        // An output window appeared or went away. Ownership is only ever taken by pressing
+        // Play, so this just rebinds that window's buttons to route to itself and puts the
+        // click listeners back in the right state.
+        onRenderTargetChanged: function () { bindAllButtons(); registerClicks(); }
     };
 })();

@@ -698,11 +698,26 @@ body.pynode_output #run, body.pynode_output #stop, body.pynode_output #restart {
     color: var(--text-invert);
 }
 
+/* display:block rather than an inline glyph with vertical-align: the inline box depended
+   on the 21.56px line-height and landed 1.4px from the box top, while the raster icons in
+   .appSectionBarIcon land at 3px. An explicit margin matches them exactly and does not
+   drift if the font metrics change. */
 .themeToggle svg {
     width: 16px;
     height: 16px;
-    vertical-align: middle;
+    display: block;
+    margin-top: 3px;
     fill: currentColor;
+}
+
+/* Sharing the strip with the other icons, so take their box: 30px wide with the glyph
+   flush left, which is what produces the 14px gap they leave between themselves. The
+   toggle's own 20px + 12px padding-left left only 4px, so it read as crowded against its
+   neighbour. Scoped to .appSectionEnlarge because in the console and output popups the
+   toggle is the only icon in the strip and sits against the right edge instead. */
+.appSectionEnlarge .themeToggle {
+    width: 30px;
+    padding-left: 0;
 }
 
 /* Which glyph shows is pure CSS. Dark is the default, so the moon is the default glyph

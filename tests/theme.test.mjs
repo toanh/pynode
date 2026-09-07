@@ -108,6 +108,62 @@ test('Monaco follows the theme, including on a first visit', async () => {
     }
 });
 
+// Geometry drifts silently, so pin it. The toggle is injected by js/pynode_theme.js rather
+// than written into the markup, so it does not inherit .appSectionBarIcon's box and has
+// twice been out of step: a 32px box (12px padding + 20px) left only 4px to its neighbour
+// where the others leave 14px, and an inline svg sat 1.6px above the raster icons.
+test('the injected theme toggle lines up with the icons beside it', async () => {
+    const { context, page } = await openApp(harness, { waitForWorker: false });
+    try {
+        const strip = await page.evaluate(() => {
+            const glyphs = [...document.querySelectorAll('.appSectionEnlarge img, .appSectionEnlarge svg')]
+                .map((g) => {
+                    const r = g.getBoundingClientRect();
+                    return { w: Math.round(r.width), top: r.top, left: r.left, right: r.right };
+                })
+                .filter((g) => g.w === 16)          // the 16px icons; resize.png is 20px
+                .sort((a, b) => a.left - b.left);
+            return {
+                tops: glyphs.map((g) => g.top),
+                gaps: glyphs.slice(1).map((g, i) => g.left - glyphs[i].right),
+            };
+        });
+
+        assert.equal(strip.tops.length, 3, 'expected the toggle plus save and import');
+        assert.equal(new Set(strip.tops).size, 1,
+            `the 16px icons are not on one baseline: ${strip.tops.join(', ')}`);
+        assert.deepEqual(strip.gaps, [14, 14],
+            `uneven spacing between the icons: ${strip.gaps.join(', ')}`);
+    } finally {
+        await context.close();
+    }
+});
+
+// The console and output popups have no .appSectionEnlarge strip, so the toggle goes
+// straight into .appSectionTitle. Appended after the block-level <h3> a right float starts
+// on the next line, which hung it 10.5px below the 40px bar with the glyph clipped.
+test('the theme toggle sits inside the title bar in the popups', async () => {
+    const { context, page } = await openApp(harness, { waitForWorker: false });
+    try {
+        for (const fn of ['outputPopup', 'consolePopup']) {
+            const popup = await openPopup(page, fn);
+            try {
+                const fits = await popup.evaluate(() => {
+                    const bar = document.querySelector('.appSectionTitle').getBoundingClientRect();
+                    const svg = document.querySelector('.themeToggle svg').getBoundingClientRect();
+                    return { overflow: svg.bottom - bar.bottom, above: bar.top - svg.top };
+                });
+                assert.ok(fits.overflow <= 0, `${fn}: toggle overflows the bar by ${fits.overflow}px`);
+                assert.ok(fits.above <= 0, `${fn}: toggle sits ${fits.above}px above the bar`);
+            } finally {
+                await popup.close();
+            }
+        }
+    } finally {
+        await context.close();
+    }
+});
+
 test('detached windows follow the main window over BroadcastChannel', async () => {
     const { context, page } = await openApp(harness, { waitForWorker: false });
     try {

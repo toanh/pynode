@@ -71,11 +71,12 @@ var PyNodeTheme = (function () {
     }
 
     // The .appSectionTitle bar is the only header structure all four documents share.
-    // Its children are float:right, so appending puts the toggle leftmost in the strip.
+    // index.html and the editor popup have an .appSectionEnlarge icon strip inside it; the
+    // console and output popups do not, so the toggle goes straight into the bar.
     function injectToggle() {
         if (document.querySelector(".themeToggle")) return;
-        var host = document.querySelector(".appSectionTitle .appSectionEnlarge") ||
-                   document.querySelector(".appSectionTitle");
+        var strip = document.querySelector(".appSectionTitle .appSectionEnlarge");
+        var host = strip || document.querySelector(".appSectionTitle");
         if (!host) return;
 
         var el = document.createElement("div");
@@ -88,7 +89,13 @@ var PyNodeTheme = (function () {
         el.addEventListener("keydown", function (ev) {
             if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); toggle(); }
         });
-        host.appendChild(el);
+        // In the icon strip the children are float:right, so appending puts the toggle
+        // leftmost, next to the other icons. Straight into the title bar it has to go
+        // FIRST instead: a right float placed after the block-level <h3> starts on the
+        // line below it, which pushed the toggle 10.5px out of the 40px bar and left it
+        // clipped in the console and output popups.
+        if (strip) host.appendChild(el);
+        else host.insertBefore(el, host.firstChild);
     }
 
     function init() {

@@ -13,8 +13,8 @@
          wrong colours. Only writes the attribute when the user has chosen; while it is
          absent the stylesheet default applies, which is dark. -->
     <script>(function(){try{var t=localStorage.getItem("pynode-theme");if(t==="dark"||t==="light")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
-    <link href="css/style.css?version=0.9.13" rel="stylesheet" type="text/css">
-    <script src="js/pynode_theme.js?version=0.9.11"></script>
+    <link href="css/style.css?version=0.9.14" rel="stylesheet" type="text/css">
+    <script src="js/pynode_theme.js?version=0.9.14"></script>
     <link rel="icon" type="image/x-icon" href="favicon.ico">
     <script src="js/resize.js?version=0.9.7"></script>
     <script src="js/d3_controls.js?version=0.9.7"></script>
@@ -35,10 +35,17 @@
             if (pynode_output !== undefined) {
                 pynode_output.close()
             }
-            pynode_output = window.open("pynode_output.html", "PyNode Output", "directories=no,titlebar=no,toolbar=no,location=no,status=no,menubar=no,width=" + w + ",height=" + h + ",left=" + left + ",top=" + top);
+            // ?version= on the PAGE url, not just its script tags: a detached window's
+            // behaviour lives in its own inline scripts, and without this a returning
+            // browser can serve a stale copy of the page forever. Bump alongside the
+            // script versions whenever a pynode_*.html inline script changes.
+            pynode_output = window.open("pynode_output.html?version=0.9.14", "PyNode Output", "directories=no,titlebar=no,toolbar=no,location=no,status=no,menubar=no,width=" + w + ",height=" + h + ",left=" + left + ",top=" + top);
             pynode_output.onload = function () {
-                // The popup owns its own greuler_instance, so the click listener has to be
-                // re-registered against the new render target.
+                // Opening the popup does NOT hand it the render stream - only pressing
+                // Play does, and it then blanks whichever window was drawing. This just
+                // puts the click listeners back in the right state. The popup announces
+                // itself too: window.open reuses the named window, so this handler can be
+                // attached too late to fire.
                 if (typeof PyNodeHost !== "undefined") PyNodeHost.onRenderTargetChanged();
             };
             pynode_output.onbeforeunload = function () {
@@ -57,7 +64,7 @@
             if (pynode_editor !== undefined) {
                 pynode_editor.close()
             }
-            pynode_editor = window.open("pynode_editor.html", "PyNode Editor", "directories=no,titlebar=no,toolbar=no,location=no,status=no,menubar=no,width=" + w + ",height=" + h + ",left=" + left + ",top=" + top);
+            pynode_editor = window.open("pynode_editor.html?version=0.9.14", "PyNode Editor", "directories=no,titlebar=no,toolbar=no,location=no,status=no,menubar=no,width=" + w + ",height=" + h + ",left=" + left + ",top=" + top);
             pynode_editor.onbeforeunload = function () {
                 pynode_editor = undefined;
             };
@@ -73,7 +80,7 @@
             if (pynode_console !== undefined) {
                 pynode_console.close()
             }
-            pynode_console = window.open("pynode_console.html", "PyNode Console", "directories=no,titlebar=no,toolbar=no,location=no,status=no,menubar=no,width=" + w + ",height=" + h + ",left=" + left + ",top=" + top);
+            pynode_console = window.open("pynode_console.html?version=0.9.14", "PyNode Console", "directories=no,titlebar=no,toolbar=no,location=no,status=no,menubar=no,width=" + w + ",height=" + h + ",left=" + left + ",top=" + top);
             pynode_console.onbeforeunload = function () {
                 pynode_console = undefined;
             };
@@ -709,7 +716,7 @@
 <!-- Python now runs as real CPython inside js/pynode_worker.js. The button state machine
      that used to live in pynode_core.py (driven from Brython via document[...].bind) has
      moved into js/pynode_host.js, because a worker has no DOM. -->
-<script src="js/pynode_host.js?version=0.9.11"></script>
+<script src="js/pynode_host.js?version=0.9.14"></script>
 <script>
     // The button background and cursor used to be set here as INLINE styles, which beat
     // any stylesheet rule and made the buttons untouchable by theming. They now live in

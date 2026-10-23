@@ -10,7 +10,7 @@
 
 import { loadPyodide } from './pyodide/pyodide.mjs';
 
-const VERSION = '0.9.11';
+const VERSION = '0.9.26';
 const here = (p) => new URL(p, location.href).href;
 
 // --- SAB layout. Must match js/pynode_host.js exactly. ---
@@ -24,6 +24,12 @@ const CTRL_IO_LEN = 6;     // byte length of the answer in the io buffer
 const CTRL_IO_SEQ = 7;     // request id, so a stale answer cannot be consumed by a later run
 const CLICK_BASE = 8;
 const CLICK_CAP = 64;
+// Debugger words, after the click ring. See pynode_debug.py.
+const CTRL_DBG_CMD = 72;   // 0 none | 1 continue | 2 step into | 3 step over | 4 step out | 5 inspect
+const CTRL_DBG_ARG = 73;   // frame index for inspect
+const CTRL_DBG_VER = 74;   // bumped whenever the dbg buffer (breakpoints/watches/record) changes
+const CTRL_DBG_BREAK = 75; // Pause pressed: break at the next user line
+const CTRL_DBG_LEN = 76;   // byte length of the JSON in the dbg buffer
 
 const POS_W = 0;         // Float64Array: canvas width / height, then [known,x,y] per node id
 const POS_H = 1;
@@ -36,6 +42,7 @@ let ctrl = null;         // Int32Array on shared memory
 let pos = null;          // Float64Array on shared memory
 let interrupt = null;    // Uint8Array on shared memory
 let io = null;           // Uint8Array on shared memory - UTF-8 answer from input()
+let dbg = null;          // Uint8Array on shared memory - UTF-8 JSON debugger settings
 let shared = true;       // false when the page is not cross-origin isolated
 let idleTimer = null;
 
@@ -146,6 +153,29 @@ function stdin() {
     }
 }
 
+// --- hooks handed to pynode_debug.install() ---
+
+// [cmd, arg, ver, break]. The command and the break request are consumed by reading them,
+// so each is acted on exactly once.
+function debugPoll() {
+    if (!shared) return [0, 0, 0, 0];
+    return [
+        Atomics.exchange(ctrl, CTRL_DBG_CMD, 0),
+        Atomics.load(ctrl, CTRL_DBG_ARG),
+        Atomics.load(ctrl, CTRL_DBG_VER),
+        Atomics.exchange(ctrl, CTRL_DBG_BREAK, 0),
+    ];
+}
+
+function debugRead() {
+    if (!shared || !dbg) return '{}';
+    const len = Atomics.load(ctrl, CTRL_DBG_LEN);
+    // TextDecoder refuses a view backed by a SharedArrayBuffer, so copy out first.
+    const bytes = new Uint8Array(len);
+    bytes.set(dbg.subarray(0, len));
+    return new TextDecoder().decode(bytes);
+}
+
 function readPosition(id) {
     const w = pos[POS_W] || 500, h = pos[POS_H] || 400;
     if (id < 0 || id >= POS_MAX) return [0, 0, 0, w, h];
@@ -158,6 +188,7 @@ async function boot(buffers) {
     pos = new Float64Array(buffers.pos);
     interrupt = new Uint8Array(buffers.interrupt);
     io = new Uint8Array(buffers.io);
+    dbg = new Uint8Array(buffers.dbg);
     shared = (typeof SharedArrayBuffer !== 'undefined') && (buffers.ctrl instanceof SharedArrayBuffer);
 
     post({ t: 'progress', step: 'loading python' });
@@ -171,16 +202,20 @@ async function boot(buffers) {
     // Fetch the two .py files rather than bundling them, so they stay readable on disk at
     // the repo root - where the crawler anchors at the end of index.html still point -
     // and can be edited without touching any JavaScript.
-    const [coreSrc, libSrc] = await Promise.all([
+    const [coreSrc, libSrc, debugSrc] = await Promise.all([
         fetch(here('../pynode_core.py?version=' + VERSION)).then(r => r.text()),
         fetch(here('../pynode_graphlib.py?version=' + VERSION)).then(r => r.text()),
+        fetch(here('../pynode_debug.py?version=' + VERSION)).then(r => r.text()),
     ]);
     pyodide.FS.writeFile('/home/pyodide/pynode_core.py', coreSrc);
     pyodide.FS.writeFile('/home/pyodide/pynode_graphlib.py', libSrc);
+    pyodide.FS.writeFile('/home/pyodide/pynode_debug.py', debugSrc);
 
     pyodide.runPython('import pynode_core');
     core = pyodide.pyimport('pynode_core');
     core.set_hooks(sink, sleep, poll, readPosition);
+    pyodide.runPython('import pynode_debug');
+    pyodide.pyimport('pynode_debug').install(debugPoll, debugRead);
 
     startIdle();
     post({ t: 'ready', python: pyodide.runPython('import sys; sys.version').split(' ')[0] });
@@ -190,6 +225,25 @@ async function boot(buffers) {
 // click listener and then ends, and its whole game is delay() chains from callbacks.
 // This is a JS tick, never a Python loop: the worker has to return to its own event loop
 // between ticks or postMessage could never be delivered.
+// Stop is delivered as SIGINT through the interrupt buffer, which surfaces as a
+// KeyboardInterrupt wherever Python happens to be next - including this idle tick or a
+// reset between runs, not just the user's code. That is the user's Stop, not an error:
+// it used to reach the console as a bare "PythonError".
+function isStop(e) {
+    const text = String((e && e.message) || '') + ' ' + String(e);
+    return /KeyboardInterrupt|PynodeStop/.test(text) || (!!ctrl && Atomics.load(ctrl, CTRL_STOP) === 1);
+}
+
+// Never show a bare exception class name: Pyodide's PythonError can arrive with an empty
+// message, which printed as just "PythonError".
+function describe(e) {
+    let text = String((e && e.message) || e || '').trim();
+    if (!text || text === 'PythonError' || text === 'Error') {
+        text = 'Something went wrong inside Python. Press Play to run again.';
+    }
+    return text.slice(0, 400);
+}
+
 function startIdle() {
     if (idleTimer !== null) return;
     idleTimer = setInterval(() => {
@@ -198,7 +252,8 @@ function startIdle() {
             core.service_idle();
             flush();
         } catch (e) {
-            post({ t: 'error', message: String(e) });
+            if (isStop(e)) { clearStop(); flush(); return; }
+            post({ t: 'error', message: describe(e) });
         }
     }, 16);
 }
@@ -207,6 +262,8 @@ function clearStop() {
     Atomics.store(ctrl, CTRL_STOP, 0);
     Atomics.store(ctrl, CTRL_PAUSE, 0);
     Atomics.store(ctrl, CTRL_IO_STATE, 0);
+    Atomics.store(ctrl, CTRL_DBG_CMD, 0);
+    Atomics.store(ctrl, CTRL_DBG_BREAK, 0);
     interrupt[0] = 0;
 }
 
@@ -222,13 +279,14 @@ self.onmessage = async (ev) => {
                 clearStop();
                 core.reset();
                 pyodide.globals.set('__pynode_src', msg.src);
+                pyodide.globals.set('__pynode_step', !!msg.stepInto);
                 let result = 'error';
                 try {
-                    result = pyodide.runPython('pynode_core.run_code(__pynode_src)');
+                    result = pyodide.runPython('pynode_core.run_code(__pynode_src, __pynode_step)');
                 } catch (e) {
                     // A KeyboardInterrupt from the interrupt buffer can surface here.
-                    result = /KeyboardInterrupt/.test(String(e)) ? 'stopped' : 'error';
-                    if (result === 'error') post({ t: 'error', message: String(e).slice(0, 400) });
+                    result = isStop(e) ? 'stopped' : 'error';
+                    if (result === 'error') post({ t: 'error', message: describe(e) });
                 }
                 clearStop();
                 flush();
@@ -238,12 +296,17 @@ self.onmessage = async (ev) => {
 
             case 'reset':
                 clearStop();
-                if (core) { core.reset(); flush(); }
+                if (core) {
+                    // The SIGINT may land inside reset itself; it has done its job.
+                    try { core.reset(); } catch (e) { if (!isStop(e)) throw e; clearStop(); core.reset(); }
+                    flush();
+                }
                 post({ t: 'stopped' });
                 break;
         }
     } catch (e) {
-        post({ t: 'error', message: String((e && e.message) || e) });
+        if (isStop(e)) { clearStop(); post({ t: 'stopped' }); return; }
+        post({ t: 'error', message: describe(e) });
     }
 };
 

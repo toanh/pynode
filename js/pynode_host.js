@@ -11,21 +11,27 @@
 var PyNodeHost = (function () {
     "use strict";
 
-    var VERSION = "0.9.14";
+    var VERSION = "0.9.26";
 
     // --- SAB layout. Must match js/pynode_worker.js exactly. ---
     var CTRL_NOTIFY = 0, CTRL_STOP = 1, CTRL_PAUSE = 2, CTRL_CLICK_W = 3, CTRL_CLICK_R = 4;
     var CTRL_IO_STATE = 5, CTRL_IO_LEN = 6;   // 0 idle | 1 pending | 2 ready | 3 cancelled
     var CTRL_IO_SEQ = 7;                      // request id, guards against stale answers
-    var CLICK_BASE = 8, CLICK_CAP = 64, CTRL_LEN = CLICK_BASE + CLICK_CAP;
+    var CLICK_BASE = 8, CLICK_CAP = 64;
+    // Debugger words, after the click ring. See pynode_debug.py.
+    var CTRL_DBG_CMD = 72, CTRL_DBG_ARG = 73, CTRL_DBG_VER = 74, CTRL_DBG_BREAK = 75, CTRL_DBG_LEN = 76;
+    var CTRL_LEN = 77;
+    var DBG_LEN = 32768;                      // UTF-8 JSON: {breakpoints, watches, record}
+    var DBG_CONTINUE = 1, DBG_INTO = 2, DBG_OVER = 3, DBG_OUT = 4, DBG_INSPECT = 5;
+    var SIGUSR1 = 10;                         // wakes pynode_debug's signal handler
     var POS_W = 0, POS_H = 1, POS_BASE = 4, POS_MAX = 1024, POS_LEN = POS_BASE + POS_MAX * 3;
     var IO_LEN = 8192;                        // UTF-8 answer from input()
 
     var worker = null;
     var ready = false;
     var isolated = (typeof SharedArrayBuffer === "function") && (self.crossOriginIsolated === true);
-    var state = "boot";              // boot | idle | playing | paused
-    var ctrl = null, pos = null, interrupt = null, io = null;
+    var state = "boot";              // boot | idle | playing | paused (= stopped in the debugger)
+    var ctrl = null, pos = null, interrupt = null, io = null, dbg = null;
     var inputEl = null;              // the live <input> while input() is pending
     var pendingSeq = -1;             // which input() request that field belongs to
     var pending = [];                // command batches awaiting a frame
@@ -212,7 +218,11 @@ var PyNodeHost = (function () {
             var handlers = {
                 run: function () { onRunClick(t); },
                 stop: function () { stop(); },
-                restart: function () { restart(t); }
+                restart: function () { restart(t); },
+                stepOver: function () { stepCommand(DBG_OVER); },
+                stepInto: function () { stepCommand(DBG_INTO); },
+                stepOut: function () { stepCommand(DBG_OUT); },
+                debugWindowButton: function () { if (typeof window.debugPopup === "function") window.debugPopup(900, 640); }
             };
             Object.keys(handlers).forEach(function (id) {
                 var el = t.document.getElementById(id);
@@ -221,7 +231,14 @@ var PyNodeHost = (function () {
         } catch (e) {}
     }
 
-    function bindAllButtons() { targets().forEach(bindButtons); }
+    function controlWindows() {
+        var list = targets();
+        var d = debugWindow();
+        if (d) list.push(d);
+        return list;
+    }
+
+    function bindAllButtons() { controlWindows().forEach(bindButtons); }
 
     function applyOne(t, name, args) {
         try {
@@ -232,6 +249,8 @@ var PyNodeHost = (function () {
             // state machine and one pending input() field whichever window is drawing.
             if (name === "__state") { setState(args[0]); return; }
             if (name === "__input") { askInput(args[0]); return; }
+            if (name === "__debug") { onDebug(args[0]); return; }
+            if (name === "__trace") { onTrace(args[0]); return; }
             if (typeof t[name] === "function") t[name].apply(t, args);
         } catch (e) {
             console.error("PyNode: failed to apply", name, e);
@@ -418,7 +437,7 @@ var PyNodeHost = (function () {
 
     // --- button state machine ----------------------------------------------
     function show(id) {
-        targets().forEach(function (t) {
+        controlWindows().forEach(function (t) {
             try {
                 ["runPlay", "runPlayLoad", "runPause", "runResume"].forEach(function (k) {
                     var el = t.document.getElementById(k);
@@ -434,7 +453,7 @@ var PyNodeHost = (function () {
            : s === "paused" ? "runResume" : "runPlayLoad");
         // For CSS only: the header's Stop is coloured red, and should not look live
         // when there is nothing to stop.
-        targets().forEach(function (t) {
+        controlWindows().forEach(function (t) {
             try { t.document.body.setAttribute("data-run-state", s); } catch (e) {}
         });
     }
@@ -448,34 +467,190 @@ var PyNodeHost = (function () {
 
     // `origin` is accepted and ignored: while the output is popped out the popup draws
     // every run, wherever Play was pressed. Older popup pages still pass it.
-    function play(origin) {
+    // `opts.stepInto` starts the run already stopped on its first line.
+    function play(origin, opts) {
         if (!ready) return;
         try { saveCode(); } catch (e) {}
         removeInput();
         pending = [];
+        trace = [];          // the trace log is per run, like the console
+        var dw = debugWindow();
+        if (dw) { try { dw.resetTrace([]); } catch (e) {} }
         writeOutput("", false);
         registerClicks();
         setState("playing");
         pushPositions();
-        worker.postMessage({ t: "run", src: getCode() });
+        writeDebugSettings();
+        worker.postMessage({ t: "run", src: getCode(), stepInto: !!(opts && opts.stepInto) });
     }
 
+    // Pause is a debugger break: the program stops on the line it is running, with its
+    // variables on show. The state flips now so the button responds at once; the worker's
+    // "__debug" report then fills in where it stopped. SIGUSR1 reaches code that is not
+    // reporting lines - a tight loop, or a pause() - see pynode_debug._on_signal.
     function pause() {
-        if (!ctrl) return;
-        Atomics.store(ctrl, CTRL_PAUSE, 1);
+        if (!ctrl || !debuggable()) return;
+        if (state !== "paused") stateBeforeBreak = state;
+        Atomics.store(ctrl, CTRL_DBG_BREAK, 1);
+        nudgeWorker();
         setState("paused");
     }
 
-    function resume() {
-        if (!ctrl) return;
-        Atomics.store(ctrl, CTRL_PAUSE, 0);
-        setState("playing");
+    function resume() { debugCommand(DBG_CONTINUE); }
+
+    // --- debugger --------------------------------------------------------------
+    var stateBeforeBreak = "playing";
+    var snapshot = null;             // last "paused" report from pynode_debug, or null
+    var trace = [];                  // execution trace entries since the run began
+    var TRACE_MAX = 2000;
+    var debugSettings = { breakpoints: [], watches: [], record: false };
+
+    // Needs real shared memory: the worker blocks waiting for a step command.
+    function debuggable() { return isolated && !!ctrl; }
+
+    // Break a running loop out to check the debugger settings, without stopping it.
+    function nudgeWorker() {
+        if (interrupt && interrupt[0] === 0) interrupt[0] = SIGUSR1;
         wake();
+    }
+
+    function writeDebugSettings() {
+        if (!debuggable() || !dbg) return;
+        var tmp = new Uint8Array(DBG_LEN);
+        var n = new TextEncoder().encodeInto(JSON.stringify(debugSettings), tmp).written;
+        // TextEncoder refuses SharedArrayBuffer views; marshal through a plain array.
+        dbg.set(tmp.subarray(0, n));
+        Atomics.store(ctrl, CTRL_DBG_LEN, n);
+        Atomics.add(ctrl, CTRL_DBG_VER, 1);
+        if (state === "playing") nudgeWorker(); else wake();
+    }
+
+    function setBreakpoints(lines) {
+        debugSettings.breakpoints = (lines || []).map(Number).filter(function (n) { return n > 0; });
+        writeDebugSettings();
+    }
+
+    function setWatches(list) {
+        debugSettings.watches = (list || []).map(String);
+        writeDebugSettings();
+        notifyDebugWindow();
+    }
+
+    function setRecord(on) {
+        debugSettings.record = !!on;
+        writeDebugSettings();
+        notifyDebugWindow();
+    }
+
+    function debugCommand(cmd, arg) {
+        if (!debuggable()) return;
+        if (cmd === DBG_CONTINUE) Atomics.store(ctrl, CTRL_DBG_BREAK, 0);   // cancel a pending Pause
+        Atomics.store(ctrl, CTRL_DBG_ARG, arg | 0);
+        Atomics.store(ctrl, CTRL_DBG_CMD, cmd);
+        wake();
+    }
+
+    function stepCommand(cmd) {
+        if (!ready) return;
+        // Step into from idle starts a run already stopped on its first line.
+        if (state === "idle" && cmd === DBG_INTO) { play(window, { stepInto: true }); return; }
+        if (state === "paused" && snapshot) debugCommand(cmd);
+    }
+
+    // A "paused" report replaces the snapshot, keeping the previous one (one level only)
+    // so the variables view can highlight what changed. "running" and the end of the run
+    // keep the last variables on show, greyed by the debug window.
+    function onDebug(info) {
+        if (!info) return;
+        if (info.state === "paused") {
+            var previous = snapshot;
+            if (previous) delete previous.previous;
+            info.previous = previous;
+            snapshot = info;
+            if (state !== "paused") stateBeforeBreak = state;
+            setState("paused");
+            var f = info.frames && info.frames[info.selected || 0];
+            showDebugLine(f ? f.line : info.line);
+        } else if (info.state === "running") {
+            if (snapshot) snapshot.state = "running";
+            showDebugLine(null);
+            setState(stateBeforeBreak === "paused" ? "playing" : stateBeforeBreak);
+        } else if (info.state === "ended") {
+            endDebugSession(info.reason);
+            return;
+        }
+        notifyDebugWindow();
+    }
+
+    // Nothing is live once a run is over - Python has discarded the frames and their
+    // variables - so the stack, variables and watch values are cleared rather than left
+    // on show. The trace log is kept until the next Play: it records what already ran.
+    // `reason`: "stopped" when the user pressed Stop, otherwise the run finished.
+    function endDebugSession(reason) {
+        if (snapshot || reason) {
+            snapshot = { state: "ended", reason: reason || "finished", frames: [], locals: [], globals: [], watches: [] };
+        }
+        showDebugLine(null);
+        notifyDebugWindow();
+    }
+
+    function onTrace(entry) {
+        if (!entry) return;
+        trace.push(entry);
+        if (trace.length > TRACE_MAX) trace.splice(0, trace.length - TRACE_MAX);
+        var w = debugWindow();
+        if (w) { try { w.appendTrace(entry); } catch (e) {} }
+    }
+
+    // The editor's current-line marker. Both editors share it over BroadcastChannel.
+    function showDebugLine(line) {
+        try { if (window.editor && window.editor.setDebugLine) window.editor.setDebugLine(line); } catch (e) {}
+    }
+
+    // --- debug window --------------------------------------------------------
+    function debugWindow() {
+        try {
+            if (typeof pynode_debug !== "undefined" && pynode_debug && !pynode_debug.closed &&
+                !pynode_debug.__pynodeClosing && typeof pynode_debug.renderDebug === "function") {
+                return pynode_debug;
+            }
+        } catch (e) {}
+        return null;
+    }
+
+    function debugView() {
+        return {
+            state: state,
+            snapshot: snapshot,
+            watches: debugSettings.watches.slice(),
+            record: debugSettings.record,
+            debuggable: debuggable()
+        };
+    }
+
+    function notifyDebugWindow() {
+        var w = debugWindow();
+        if (w) { try { w.renderDebug(debugView()); } catch (e) {} }
+    }
+
+    function debugOpened(win) {
+        try {
+            if (!win || win.closed) return;
+            bindButtons(win);
+            win.renderDebug(debugView());
+            win.resetTrace(trace.slice());
+            setState(state);    // stamps data-run-state into the new window
+        } catch (e) {}
+    }
+
+    function debugClosing(win) {
+        try { if (win) win.__pynodeClosing = true; } catch (e) {}
     }
 
     function stop() {
         removeInput();
         signalStop();
+        endDebugSession("stopped");
         if (!isolated) {
             // Without shared memory the worker cannot see the stop flag, so the only way
             // to interrupt it is to kill it and boot a fresh one.
@@ -514,11 +689,13 @@ var PyNodeHost = (function () {
         var posBuf = new Buf(POS_LEN * 8);
         var intBuf = new Buf(1);
         var ioBuf = new Buf(IO_LEN);
+        var dbgBuf = new Buf(DBG_LEN);
         ctrl = new Int32Array(ctrlBuf);
         pos = new Float64Array(posBuf);
         interrupt = new Uint8Array(intBuf);
         io = new Uint8Array(ioBuf);
-        return { ctrl: ctrlBuf, pos: posBuf, interrupt: intBuf, io: ioBuf };
+        dbg = new Uint8Array(dbgBuf);
+        return { ctrl: ctrlBuf, pos: posBuf, interrupt: intBuf, io: ioBuf, dbg: dbgBuf };
     }
 
     function spawn() {
@@ -535,13 +712,16 @@ var PyNodeHost = (function () {
                     writeOutput("<p style='color:var(--c-warn);'>Reduced-performance mode: " +
                         "cross-origin isolation unavailable.</p>", true);
                 }
+                writeDebugSettings();   // breakpoints restored from the editor before boot
                 bindAllButtons();   // covers a popup opened before the worker finished booting
                 registerClicks();
                 if (positionsTimer === null) positionsTimer = setInterval(pushPositions, 100);
             } else if (m.t === "events") {
                 enqueue(m.events);
             } else if (m.t === "done") {
-                var tail = [];
+                // In-band, like __state: the worker's last "__debug running" report may
+                // still be waiting for a frame, and must not land after "ended".
+                var tail = [["__debug", [{ state: "ended", reason: m.result === "stopped" ? "stopped" : "finished" }]]];
                 if (m.result === "ok") {
                     tail.push(["print", ["<p style='display:inline;color:var(--c-ok);'>Done<br></p>"]]);
                 } else if (m.result === "stopped") {
@@ -550,9 +730,11 @@ var PyNodeHost = (function () {
                 tail.push(["__state", ["idle"]]);
                 enqueue(tail);
             } else if (m.t === "stopped") {
+                enqueue([["__debug", [{ state: "ended", reason: "stopped" }]]]);
                 setState("idle");
             } else if (m.t === "error") {
                 enqueue([
+                    ["__debug", [{ state: "ended" }]],
                     ["print", ["<p style='display:inline;color:var(--c-err);'>" + m.message + "<br></p>"]],
                     ["__state", ["idle"]]
                 ]);
@@ -597,6 +779,20 @@ var PyNodeHost = (function () {
         outputOpened: function (win) { popOut(win); },
         outputClosing: function (win) { popIn(win); },
         consoleOpened: consoleOpened,
-        consoleClosing: consoleClosing
+        consoleClosing: consoleClosing,
+        // Debugger
+        stepInto: function () { stepCommand(DBG_INTO); },
+        stepOver: function () { stepCommand(DBG_OVER); },
+        stepOut: function () { stepCommand(DBG_OUT); },
+        continueRun: function () { if (state === "paused") resume(); },
+        inspectFrame: function (i) { if (state === "paused") debugCommand(DBG_INSPECT, i); },
+        setBreakpoints: setBreakpoints,
+        setWatches: setWatches,
+        setRecord: setRecord,
+        debugView: debugView,
+        traceLog: function () { return trace.slice(); },
+        clearTrace: function () { trace = []; var w = debugWindow(); if (w) { try { w.resetTrace([]); } catch (e) {} } },
+        debugOpened: debugOpened,
+        debugClosing: debugClosing
     };
 })();

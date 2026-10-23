@@ -66,6 +66,19 @@ The `js_*` string constants at the bottom of `pynode_core.py` are the protocol; 
 - **Do not call `pynode_graphlib._exec_code()`.** It does `namespace = locals()` inside a function, which under CPython is just `{'src': ...}`, so user code cannot see `graph`, `Node`, `Edge`, `Color` or `pause`. Brython chains function-scope `locals()` to module globals, which is why it worked before. `pynode_core.run_code()` builds the namespace from a copy of `pynode_graphlib.__dict__` instead.
 - **A blocked worker cannot receive `postMessage`.** While user code runs, the worker is parked in `Atomics.wait` and executes no JavaScript, so clicks and the stop/pause flags travel through the `SharedArrayBuffer` — never `postMessage`. This is also why the post-run idle loop is a JS tick rather than a Python `while True`.
 
+### The debugger
+
+[pynode_debug.py](pynode_debug.py) is pure Python like the core (no `js`); the worker hands it `debug_poll` / `debug_read` hooks via `install()`. User code is compiled under the filename `"<pynode>"` (`pynode_core.run_code`), which is how its frames are told from the library's and why line numbers map one-to-one onto the editor.
+
+- **Engine: `sys.monitoring`, not `settrace`.** A LINE callback that returns `DISABLE` silences that location until `restart_events()`, so lines without a breakpoint cost nothing and animation timing is unaffected (a test guards this). Stepping, Record and every settings change call `restart_events()`.
+- **A stop is the callback blocking**: flush, report a snapshot in-band as a synthetic `__debug` command, then wait on the control block for a command. It **never calls `service()`** - that is what freezes `delay()` callbacks and clicks while stopped.
+- **Reaching code that isn't reporting lines** (a tight loop, a `pause()`): the host writes **SIGUSR1 (10)** into Pyodide's interrupt buffer, and `_on_signal` runs at the next bytecode boundary with the live frame. That is how Pause and breakpoints added mid-run work in a `while True`. SIGINT (2) remains Stop.
+- **Control block**: `CTRL_DBG_CMD/ARG/VER/BREAK/LEN` follow the click ring (words 72-76, `CTRL_LEN` 77), plus a 32 KB `dbg` buffer of JSON `{breakpoints, watches, record}`. Same TextEncoder/SharedArrayBuffer trap as `input()`.
+- **In-band, always**: `__debug {paused|running|ended}` and `__trace` ride the command stream. The end of a session is enqueued (not applied on the `done` message) because the last `running` report may still be waiting for a frame - applying `ended` directly let `running` land after it.
+- **Host state `paused` means stopped in the debugger.** Pause flips it at once and the worker's report fills in the line. When a run ends, the stack/variables/watch values are cleared (nothing is live any more); the trace log is kept until the next Play.
+- **Editor**: breakpoints are Monaco decorations (they move with edits), persisted in `localStorage` `breakpoints`, mirrored to the editor popup over `pynode-code`. `editor.setValue` keeps them (and suppresses change reports while Monaco briefly drops all decorations); `replaceValue` - a new file or example - clears them.
+- **Stop surfaces anywhere**: the SIGINT can land in the worker's idle tick or a reset between runs. `isStop()` in the worker treats that as a stop, never an error; it used to print a bare "PythonError".
+
 ### Rendering stack
 
 `graph_api.js` mutates `greuler_instance` (a modified [Greuler](js/greuler/greuler.js), which sits on WebCola for layout and D3 for drawing). [js/resize.js](js/resize.js) owns layout: it injects invisible boundary nodes to constrain the layout to the viewport, and manages the two layout modes and node pinning. [js/d3_controls.js](js/d3_controls.js) handles pan/zoom.
@@ -99,7 +112,7 @@ Editor state persists in `localStorage` under the key `code`, and `?project=<nam
 `tests/` holds a Playwright suite run by Node's built-in test runner:
 
 ```
-cd tests && npm ci && npm test          # ~120s, 60 tests
+cd tests && npm ci && npm test          # ~150s, 76 tests
 npm test -- --test-name-pattern=theme   # filter
 npm test -- ./io.test.mjs               # one file
 ```

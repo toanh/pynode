@@ -61,6 +61,14 @@
     --run-pause: #fbbf24;
     --run-stop: #f87171;
     --run-restart: #60a5fa;
+    --run-step: #c4b5fd;
+
+    /* Debugger marks in the editor. Monaco cannot read custom properties, but these
+       are used by plain CSS classes on its decorations, which can. */
+    --dbg-breakpoint: #e5484d;
+    --dbg-arrow: #fbbf24;
+    --dbg-line: rgba(251, 191, 36, 0.16);
+    --dbg-changed: rgba(251, 191, 36, 0.22);
 }
 
 :root[data-theme="light"] {
@@ -98,6 +106,11 @@
 
     --run-bg: #3d3d3d;
     --run-bg-hover: #2f2f2f;
+
+    --dbg-breakpoint: #d32f2f;
+    --dbg-arrow: #b7791f;
+    --dbg-line: rgba(255, 196, 0, 0.22);
+    --dbg-changed: rgba(255, 196, 0, 0.35);
 }
 
 html {
@@ -373,19 +386,19 @@ body.pynode .layoutButtonOff, body.pynode_output .layoutButtonOff {
     cursor: pointer;
 }
 
-body.pynode #runPlay, body.pynode_output #runPlay {
+body.pynode #runPlay, body.pynode_output #runPlay, body.pynode_debug #runPlay {
     display: inherit;
 }
 
-body.pynode #runPlayLoad, body.pynode_output #runPlayLoad {
+body.pynode #runPlayLoad, body.pynode_output #runPlayLoad, body.pynode_debug #runPlayLoad {
     display: none;
 }
 
-body.pynode #runPause, body.pynode_output #runPause {
+body.pynode #runPause, body.pynode_output #runPause, body.pynode_debug #runPause {
     display: none;
 }
 
-body.pynode #runResume, body.pynode_output #runResume {
+body.pynode #runResume, body.pynode_output #runResume, body.pynode_debug #runResume {
     display: none;
 }
 
@@ -572,7 +585,8 @@ body.pynode #console, body.pynode_console #console {
     min-width: 12ch;
 }
 
-body.pynode .appSectionTitle, body.pynode_output .appSectionTitle, body.pynode_editor .appSectionTitle, body.pynode_console .appSectionTitle, body.pynode_docs .appSectionTitle {
+body.pynode .appSectionTitle, body.pynode_output .appSectionTitle, body.pynode_editor .appSectionTitle, body.pynode_console .appSectionTitle, body.pynode_docs .appSectionTitle,
+body.pynode_debug .appSectionTitle {
     color: var(--text-invert);
     background-color: var(--bg-chrome);
     padding-left: 10px;
@@ -799,19 +813,18 @@ body.pynode_editor .headerActions {
 /* RUN CONTROLS
    ==================================================
    Icon-only and colour-coded: green play/resume, amber pause, red stop, blue restart.
-   Shared by the main page's header and the output popup's title bar - same markup.
+   Shared by the main page's header, the output popup's and the debugger window's title
+   bars - same markup, so these rules are deliberately not scoped to one page.
    #runPlay/#runPlayLoad/#runPause/#runResume are swapped by js/pynode_host.js show(),
    which sets display:inherit on the live one - so #run is a flex box and the icon
    inherits that. Room is left in the group for debugger buttons later. */
-body.pynode .runControls,
-body.pynode_output .runControls {
+.runControls {
     display: flex;
     align-items: center;
     gap: 6px;
 }
 
-body.pynode .runControls .runButton,
-body.pynode_output .runControls .runButton {
+.runControls .runButton {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -823,38 +836,29 @@ body.pynode_output .runControls .runButton {
     transition: background-color 0.15s ease, opacity 0.15s ease;
 }
 
-body.pynode .runControls .runButton:hover,
-body.pynode_output .runControls .runButton:hover {
+.runControls .runButton:hover {
     background-color: var(--run-bg-hover);
 }
 
-body.pynode .runControls .runButton:focus-visible,
-body.pynode_output .runControls .runButton:focus-visible {
+.runControls .runButton:focus-visible {
     outline: 2px solid var(--link);
     outline-offset: 1px;
 }
 
-body.pynode .runIcon svg,
-body.pynode_output .runIcon svg {
+.runIcon svg {
     display: block;
     width: 18px;
     height: 18px;
     fill: currentColor;
 }
 
-body.pynode .iconPlay,
-body.pynode_output .iconPlay { color: var(--run-play); }
-body.pynode .iconPause,
-body.pynode_output .iconPause { color: var(--run-pause); }
-body.pynode .iconStop,
-body.pynode_output .iconStop { color: var(--run-stop); }
-body.pynode .iconRestart,
-body.pynode_output .iconRestart { color: var(--run-restart); }
-body.pynode .iconLoad,
-body.pynode_output .iconLoad { color: var(--text-muted); }
+.iconPlay { color: var(--run-play); }
+.iconPause { color: var(--run-pause); }
+.iconStop { color: var(--run-stop); }
+.iconRestart { color: var(--run-restart); }
+.iconLoad { color: var(--text-muted); }
 
-body.pynode .iconLoad svg,
-body.pynode_output .iconLoad svg {
+.iconLoad svg {
     animation: runSpin 1s linear infinite;
 }
 
@@ -863,17 +867,33 @@ body.pynode_output .iconLoad svg {
 }
 
 @media (prefers-reduced-motion: reduce) {
-    body.pynode .iconLoad svg, body.pynode_output .iconLoad svg { animation: none; }
+    .iconLoad svg { animation: none; }
 }
 
 /* Nothing to stop or restart while idle or still loading Python; don't let the red and
    blue read as live. data-run-state is set by PyNodeHost.setState. */
-body.pynode[data-run-state="idle"] #stop,
-body.pynode_output[data-run-state="idle"] #stop,
-body.pynode[data-run-state="boot"] #stop,
-body.pynode_output[data-run-state="boot"] #stop,
-body.pynode[data-run-state="boot"] #restart,
-body.pynode_output[data-run-state="boot"] #restart {
+body[data-run-state="idle"] #stop,
+body[data-run-state="boot"] #stop,
+body[data-run-state="boot"] #restart {
+    opacity: 0.35;
+    cursor: default;
+}
+
+/* Debugger buttons: Step over / into / out, and the button that opens the debugger
+   window. Stepping only makes sense while stopped - except Step into, which from idle
+   starts a run stopped on its first line. */
+.runDivider {
+    width: 1px;
+    height: 20px;
+    margin: 0 4px;
+    background-color: var(--divider-light);
+}
+
+.iconStep, .iconDebug { color: var(--run-step); }
+
+body:not([data-run-state="paused"]) #stepOver,
+body:not([data-run-state="paused"]) #stepOut,
+body:not([data-run-state="paused"]):not([data-run-state="idle"]) #stepInto {
     opacity: 0.35;
     cursor: default;
 }
@@ -1063,7 +1083,8 @@ body.pynode .layoutButtonOff:hover, body.pynode_output .layoutButtonOff:hover {
    ==================================================
    Mirrors the main page header: title left, run controls centred, layout and theme
    toggles right. The button row that used to sit under the canvas is gone. */
-body.pynode_output .outputTitle {
+body.pynode_output .outputTitle,
+body.pynode_debug .outputTitle {
     display: grid;
     grid-template-columns: 1fr auto 1fr;
     align-items: center;
@@ -1076,23 +1097,264 @@ body.pynode_output .outputTitle {
     padding: 0 10px;
 }
 
-body.pynode_output .outputTitleRight {
+body.pynode_output .outputTitleRight,
+body.pynode_debug .outputTitleRight {
     display: flex;
     align-items: center;
     justify-content: flex-end;
     gap: 6px;
 }
 
-body.pynode_output .outputTitle .buttonBarLayoutPanel {
+body.pynode_output .outputTitle .buttonBarLayoutPanel,
+body.pynode_debug .outputTitle .buttonBarLayoutPanel {
     float: none;
     display: flex;
     width: auto;
     padding: 0;
 }
 
-body.pynode_output .outputTitle .themeToggleHost {
+body.pynode_output .outputTitle .themeToggleHost,
+body.pynode_debug .outputTitle .themeToggleHost {
     float: none;
     display: flex;
     height: 20px;
     padding-right: 0;
+}
+
+/* DEBUGGER
+   ==================================================
+   Editor decorations (js/monaco_setup.js) and the debugger window (pynode_debug.html). */
+
+/* Breakpoint dot in the glyph margin. */
+.pynodeBreakpoint {
+    cursor: pointer;
+}
+
+.pynodeBreakpoint::before {
+    content: "";
+    display: block;
+    width: 10px;
+    height: 10px;
+    margin: 5px 0 0 5px;
+    border-radius: 50%;
+    background-color: var(--dbg-breakpoint);
+}
+
+/* The line the debugger is stopped at: a highlight plus an arrow drawn over the dot. */
+.pynodeDebugLine {
+    background-color: var(--dbg-line);
+}
+
+.pynodeDebugArrow::after {
+    content: "";
+    position: absolute;
+    top: 4px;
+    left: 4px;
+    border-style: solid;
+    border-width: 6px 0 6px 10px;
+    border-color: transparent transparent transparent var(--dbg-arrow);
+}
+
+/* The window itself never scrolls - only the panels do, and only when they overflow -
+   so the title bar and its controls cannot be scrolled out of reach. */
+body.pynode_debug {
+    background-color: var(--bg-app);
+    overflow: hidden;
+}
+
+body.pynode_debug .debugPage {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+}
+
+body.pynode_debug .outputTitle,
+body.pynode_debug .debugStatus {
+    flex: none;
+}
+
+body.pynode_debug .debugStatus {
+    padding: 6px 12px;
+    font-family: Segoe, "Segoe UI", "DejaVu Sans", "Trebuchet MS", Verdana, sans-serif;
+    font-size: 13px;
+    color: var(--text);
+    background-color: var(--bg-inset);
+}
+
+body.pynode_debug .debugGrid {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    /* minmax(0, ...): a grid track otherwise grows to fit its widest unbreakable line (a
+       long trace entry or value), which pushed the whole window into scrolling. */
+    grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 8px;
+    padding: 8px;
+}
+
+body.pynode_debug .debugPanel {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    min-width: 0;
+    background-color: var(--bg-panel);
+    box-shadow: 0 0 12px 0 var(--shadow);
+}
+
+body.pynode_debug .debugPanel h4 {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    white-space: nowrap;
+    overflow: hidden;
+    padding: 6px 10px;
+    color: var(--text-invert);
+    background-color: var(--bg-chrome);
+}
+
+body.pynode_debug .debugBody {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    margin: 0;
+    padding: 4px 0;
+    font: 13px/1.5 monospace;
+    color: var(--text);
+}
+
+body.pynode_debug .debugList {
+    list-style: none;
+}
+
+/* Values from the last stop stay on show while running or after the run, greyed. */
+body.pynode_debug.debugStale .debugBody:not(.traceList) {
+    opacity: 0.55;
+}
+
+body.pynode_debug .debugFrame {
+    display: flex;
+    justify-content: space-between;
+    padding: 2px 10px;
+    cursor: pointer;
+}
+
+body.pynode_debug .debugFrame:hover {
+    background-color: var(--bg-inset);
+}
+
+body.pynode_debug .debugFrame.selected {
+    background-color: var(--dbg-line);
+    font-weight: bold;
+}
+
+body.pynode_debug .debugFrameLine,
+body.pynode_debug .debugVarType,
+body.pynode_debug .traceLine {
+    color: var(--text-muted);
+}
+
+body.pynode_debug .debugSectionTitle {
+    padding: 4px 10px 2px;
+    font-weight: bold;
+    color: var(--text-muted);
+}
+
+body.pynode_debug .debugVarList,
+body.pynode_debug .debugVarChildren {
+    list-style: none;
+    margin: 0;
+    padding-left: 14px;
+}
+
+body.pynode_debug .debugVarLine {
+    white-space: pre;
+}
+
+body.pynode_debug .debugVarLine.changed {
+    background-color: var(--dbg-changed);
+}
+
+body.pynode_debug .debugVarName {
+    color: var(--link);
+}
+
+body.pynode_debug .debugVarType {
+    margin-left: 10px;
+    font-size: 11px;
+}
+
+body.pynode_debug .debugVarValue.error {
+    color: var(--c-err);
+}
+
+body.pynode_debug .debugEmpty,
+body.pynode_debug .debugVarMore {
+    color: var(--text-muted);
+}
+
+body.pynode_debug summary {
+    cursor: pointer;
+}
+
+body.pynode_debug .watchForm input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 5px 10px;
+    border: none;
+    border-bottom: 1px solid var(--border);
+    font: 13px monospace;
+    color: var(--text);
+    background-color: var(--bg-inset);
+}
+
+body.pynode_debug .debugWatch {
+    padding-left: 4px;
+}
+
+body.pynode_debug .watchRemove,
+body.pynode_debug .traceClear {
+    font: inherit;
+    color: var(--text-muted);
+    background: none;
+    border: none;
+    cursor: pointer;
+}
+
+body.pynode_debug .watchRemove:hover {
+    color: var(--c-err);
+}
+
+body.pynode_debug .traceRecord {
+    margin-left: auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font: 12px Segoe, "Segoe UI", "DejaVu Sans", "Trebuchet MS", Verdana, sans-serif;
+    cursor: pointer;
+}
+
+body.pynode_debug .traceClear {
+    font-size: 12px;
+    color: var(--text-invert);
+}
+
+body.pynode_debug .traceEntry {
+    display: flex;
+    gap: 10px;
+    padding: 0 10px;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+body.pynode_debug .traceEntry:hover {
+    background-color: var(--bg-inset);
+}
+
+body.pynode_debug .traceFunc {
+    color: var(--link);
+}
+
+body.pynode_debug .traceChanged {
+    color: var(--text);
 }

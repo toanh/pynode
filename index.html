@@ -13,7 +13,7 @@
          wrong colours. Only writes the attribute when the user has chosen; while it is
          absent the stylesheet default applies, which is dark. -->
     <script>(function(){try{var t=localStorage.getItem("pynode-theme");if(t==="dark"||t==="light")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
-    <link href="css/style.css?version=0.9.24" rel="stylesheet" type="text/css">
+    <link href="css/style.css?version=0.9.26" rel="stylesheet" type="text/css">
     <script src="js/pynode_theme.js?version=0.9.21"></script>
     <link rel="icon" type="image/x-icon" href="favicon.ico">
     <script src="js/resize.js?version=0.9.16"></script>
@@ -28,6 +28,7 @@
         var pynode_editor;
         var pynode_console;
         var pynode_docs;
+        var pynode_debug;
         var enable_editor = true;
 
         // window.open features for a popup of the requested size, shrunk to fit the
@@ -58,7 +59,7 @@
             // behaviour lives in its own inline scripts, and without this a returning
             // browser can serve a stale copy of the page forever. Bump alongside the
             // script versions whenever a pynode_*.html inline script changes.
-            var win = pynode_output = window.open("pynode_output.html?version=0.9.22", "PyNode Output", popupFeatures(w, h));
+            var win = pynode_output = window.open("pynode_output.html?version=0.9.25", "PyNode Output", popupFeatures(w, h));
             win.onload = function () {
                 if (hostReady()) PyNodeHost.outputOpened(win);
             };
@@ -84,7 +85,7 @@
             if (pynode_editor !== undefined) {
                 pynode_editor.close()
             }
-            pynode_editor = window.open("pynode_editor.html?version=0.9.24", "PyNode Editor", popupFeatures(w, h));
+            pynode_editor = window.open("pynode_editor.html?version=0.9.26", "PyNode Editor", popupFeatures(w, h));
             pynode_editor.onbeforeunload = function () {
                 pynode_editor = undefined;
             };
@@ -115,11 +116,42 @@
             return false;
         }
 
+        // The debugger window: call stack, variables, watches and the execution trace. It
+        // is seeded with the current stop on open (PyNodeHost.debugOpened), like the console.
+        function debugPopup(w, h) {
+            if (pynode_debug !== undefined && !pynode_debug.closed) {
+                pynode_debug.focus();
+                return false;
+            }
+            var win = pynode_debug = window.open("pynode_debug.html?version=0.9.27", "PyNode Debugger", popupFeatures(w, h));
+            win.onload = function () {
+                if (hostReady()) PyNodeHost.debugOpened(win);
+            };
+            win.onbeforeunload = function () {
+                if (hostReady()) PyNodeHost.debugClosing(win);
+                if (pynode_debug === win) pynode_debug = undefined;
+            };
+            return false;
+        }
+
+        // Debugger keys outside the editor too (Monaco has its own bindings for when it has
+        // focus). F11 would otherwise toggle full screen and F8/F10 do browser things.
+        document.addEventListener("keydown", function (ev) {
+            if (typeof PyNodeHost === "undefined") return;
+            // Monaco binds these itself while focused; handling them here too would step twice.
+            if (ev.target && ev.target.closest && ev.target.closest(".monaco-editor")) return;
+            var fn = ev.key === "F8" ? "continueRun" : ev.key === "F10" ? "stepOver"
+                   : ev.key === "F11" ? (ev.shiftKey ? "stepOut" : "stepInto") : null;
+            if (!fn) return;
+            ev.preventDefault();
+            PyNodeHost[fn]();
+        });
+
         function docsPopup(w, h) {
             if (pynode_docs !== undefined) {
                 pynode_docs.close()
             }
-            pynode_docs = window.open("pynode_docs.html?version=0.9.23", "PyNode Docs", popupFeatures(w, h));
+            pynode_docs = window.open("pynode_docs.html?version=0.9.27", "PyNode Docs", popupFeatures(w, h));
             pynode_docs.onbeforeunload = function () {
                 pynode_docs = undefined;
             };
@@ -140,7 +172,7 @@
             drawer.setAttribute("aria-hidden", open ? "false" : "true");
             if (open && !docs_loaded) {
                 docs_loaded = true;
-                fetch("pynode_docs.html?version=0.9.23")
+                fetch("pynode_docs.html?version=0.9.27")
                     .then(function (r) { return r.text(); })
                     .then(function (html) {
                         var doc = new DOMParser().parseFromString(html, "text/html");
@@ -175,6 +207,9 @@
             }
             if (pynode_docs !== undefined) {
                 pynode_docs.close();
+            }
+            if (pynode_debug !== undefined) {
+                pynode_debug.close();
             }
             if (pynode_editor !== undefined) {
                 pynode_editor.close();
@@ -265,12 +300,25 @@
                 <div id="restart" class="runButton" title="Restart" role="button" tabindex="0">
                     <span class="runIcon iconRestart"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 5V1.5L7 6l5 4.5V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z"/></svg></span>
                 </div>
+                <span class="runDivider" aria-hidden="true"></span>
+                <div id="stepOver" class="runButton stepButton" title="Step over (F10)" role="button" tabindex="0">
+                    <span class="runIcon iconStep"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4.5 14a7.5 7.5 0 0 1 14-3.7L20.5 8v6.5H14l2.6-2.6A5 5 0 0 0 7 14z"/><circle cx="12" cy="19.5" r="2.2"/></svg></span>
+                </div>
+                <div id="stepInto" class="runButton stepButton" title="Step into (F11)" role="button" tabindex="0">
+                    <span class="runIcon iconStep"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M11 2.5h2v8.6l3.3-3.3 1.4 1.4L12 14.9 6.3 9.2l1.4-1.4 3.3 3.3z"/><circle cx="12" cy="19.5" r="2.2"/></svg></span>
+                </div>
+                <div id="stepOut" class="runButton stepButton" title="Step out (Shift+F11)" role="button" tabindex="0">
+                    <span class="runIcon iconStep"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M11 15h2V6.4l3.3 3.3 1.4-1.4L12 2.6 6.3 8.3l1.4 1.4L11 6.4z"/><circle cx="12" cy="19.5" r="2.2"/></svg></span>
+                </div>
+                <div id="debugWindowButton" class="runButton" title="Debugger: variables, call stack, watches, trace" role="button" tabindex="0">
+                    <span class="runIcon iconDebug"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8.6 4.2 7.2 2.8 5.8 4.2l1.6 1.6A5.6 5.6 0 0 0 6.6 8H4v2h2.5v1.5H4v2h2.5v.5c0 .6.1 1.2.3 1.8L4.5 18l1.4 1.4 1.9-1.9A5.5 5.5 0 0 0 12 19.5a5.5 5.5 0 0 0 4.2-2l1.9 1.9 1.4-1.4-2.3-2.2c.2-.6.3-1.2.3-1.8v-.5H20v-2h-2.5V10H20V8h-2.6a5.6 5.6 0 0 0-.8-2.2l1.6-1.6-1.4-1.4-1.6 1.6A5.5 5.5 0 0 0 12 3.5c-1.2 0-2.4.3-3.4.7zM11 9h2v8h-2z"/></svg></span>
+                </div>
             </div>
             <div class="headerRight">
                 <div class="appSectionEnlarge headerActions">
                     <div class="appSectionBarIcon"><h3><a href="pynode_editor.html" title="Open the editor in a new window"
                                                           onclick="return editorPopup(800, 690)"><img
-                            src="images/controls/resize.png" width="20" height="20"></a></h3></div>
+                            src="images/controls/resize.png" width="16" height="16"></a></h3></div>
                 </div>
                 <a href="pynode_docs.html" class="docsButton" title="Documentation and about" onclick="toggleDocs(); return false;">Docs</a>
             </div>
@@ -306,7 +354,7 @@
                             </div>
                             <div class="appSectionEnlarge">
                                 <h3><a href="pynode_output.html" title="Open the output in a new window" onclick="return outputPopup(800, 690)"><img
-                                        src="images/controls/resize.png" width="20" height="20"></a></h3>
+                                        src="images/controls/resize.png" width="16" height="16"></a></h3>
                             </div>
                         </div>
                         <div id="outputBox">
@@ -324,7 +372,7 @@
                             </div>
                             <div class="appSectionEnlarge">
                                 <h3><a href="pynode_console.html" title="Open the console in a new window" onclick="return consolePopup(800, 690)"><img
-                                        src="images/controls/resize.png" width="20" height="20"></a></h3>
+                                        src="images/controls/resize.png" width="16" height="16"></a></h3>
                             </div>
                         </div>
                         <div class="consoleBox">
@@ -348,7 +396,7 @@
                                                                onclick="toggleDocs(false); return false;">&times;</a></h3></div>
                     <div class="appSectionBarIcon"><h3><a href="pynode_docs.html" title="Open in a new window"
                                                           onclick="toggleDocs(false); return docsPopup(800, 690)"><img
-                            src="images/controls/resize.png" width="20" height="20"></a></h3></div>
+                            src="images/controls/resize.png" width="16" height="16"></a></h3></div>
                 </div>
             </div>
             <div class="docsContent"><p>Loading...</p></div>
@@ -359,7 +407,7 @@
      itself and will not propagate a query string. Bump the js/monaco/ directory name instead. -->
 <script src="js/monaco/vs/loader.js"></script>
 <script src="js/pynode_completions.js?version=0.9.11"></script>
-<script src="js/monaco_setup.js?version=0.9.24"></script>
+<script src="js/monaco_setup.js?version=0.9.26"></script>
 <script>
     resize();
 
@@ -493,7 +541,7 @@
 <!-- Python now runs as real CPython inside js/pynode_worker.js. The button state machine
      that used to live in pynode_core.py (driven from Brython via document[...].bind) has
      moved into js/pynode_host.js, because a worker has no DOM. -->
-<script src="js/pynode_host.js?version=0.9.23"></script>
+<script src="js/pynode_host.js?version=0.9.27"></script>
 <script>
     // The button background and cursor used to be set here as INLINE styles, which beat
     // any stylesheet rule and made the buttons untouchable by theming. They now live in
@@ -502,7 +550,7 @@
 
     // The header run controls are focusable divs (role="button"); give them the keyboard
     // behaviour a real button has. .click() goes through whatever onclick PyNodeHost bound.
-    ["run", "stop", "restart"].forEach(function (id) {
+    ["run", "stop", "restart", "stepOver", "stepInto", "stepOut", "debugWindowButton"].forEach(function (id) {
         document.getElementById(id).addEventListener("keydown", function (ev) {
             if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); this.click(); }
         });
@@ -530,6 +578,7 @@
 
 <!-- Relevant links that are not directly referenced. Allows website to be properly read with automatic web crawling. -->
 <a hidden style="display:none" href="pynode_docs.html">&nbsp</a>
+<a hidden style="display:none" href="pynode_debug.py">&nbsp</a>
 <a hidden style="display:none" href="pynode_core.py">&nbsp</a>
 <a hidden style="display:none" href="pynode_graphlib.py">&nbsp</a>
 <a hidden style="display:none" href="pynode_projects/cannibals.py">&nbsp</a>

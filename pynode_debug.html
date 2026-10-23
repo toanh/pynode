@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+
+<html>
+<head>
+    <title>PyNode Debugger</title>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <!-- Must load first, like every other page. See index.html. -->
+    <script src="coi-serviceworker.js"></script>
+    <script>(function(){try{var t=localStorage.getItem("pynode-theme");if(t==="dark"||t==="light")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+    <link href="css/style.css?version=0.9.26" rel="stylesheet" type="text/css">
+    <script src="js/pynode_theme.js?version=0.9.21"></script>
+    <link rel="icon" type="image/x-icon" href="favicon.ico">
+</head>
+
+<!-- The debugger window. Pure view: everything comes from the opener's PyNodeHost, which
+     calls renderDebug() / appendTrace() here, and every action goes back through it.
+     Opened by debugPopup() in index.html; seeded on open by PyNodeHost.debugOpened. -->
+<body class="pynode_debug">
+<div class="debugPage">
+    <div class="appSectionTitle outputTitle">
+        <div class="outputTitleLeft">
+            <h3>Debugger</h3>
+        </div>
+                <div class="runControls" role="toolbar" aria-label="Run controls">
+                    <div id="run" class="runButton" title="Play / pause" role="button" tabindex="0">
+                        <span id="runPlay" class="runIcon iconPlay"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8 5v14l11-7z"/></svg></span>
+                        <span id="runPlayLoad" class="runIcon iconLoad"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 4a8 8 0 1 0 8 8h-2.5A5.5 5.5 0 1 1 12 6.5z"/></svg></span>
+                        <span id="runPause" class="runIcon iconPause"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg></span>
+                        <span id="runResume" class="runIcon iconPlay"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8 5v14l11-7z"/></svg></span>
+                    </div>
+                    <div id="stop" class="runButton" title="Stop" role="button" tabindex="0">
+                        <span class="runIcon iconStop"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg></span>
+                    </div>
+                    <div id="restart" class="runButton" title="Restart" role="button" tabindex="0">
+                        <span class="runIcon iconRestart"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 5V1.5L7 6l5 4.5V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z"/></svg></span>
+                    </div>
+                    <span class="runDivider" aria-hidden="true"></span>
+                    <div id="stepOver" class="runButton stepButton" title="Step over (F10)" role="button" tabindex="0">
+                        <span class="runIcon iconStep"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4.5 14a7.5 7.5 0 0 1 14-3.7L20.5 8v6.5H14l2.6-2.6A5 5 0 0 0 7 14z"/><circle cx="12" cy="19.5" r="2.2"/></svg></span>
+                    </div>
+                    <div id="stepInto" class="runButton stepButton" title="Step into (F11)" role="button" tabindex="0">
+                        <span class="runIcon iconStep"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M11 2.5h2v8.6l3.3-3.3 1.4 1.4L12 14.9 6.3 9.2l1.4-1.4 3.3 3.3z"/><circle cx="12" cy="19.5" r="2.2"/></svg></span>
+                    </div>
+                    <div id="stepOut" class="runButton stepButton" title="Step out (Shift+F11)" role="button" tabindex="0">
+                        <span class="runIcon iconStep"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M11 15h2V6.4l3.3 3.3 1.4-1.4L12 2.6 6.3 8.3l1.4 1.4L11 6.4z"/><circle cx="12" cy="19.5" r="2.2"/></svg></span>
+                    </div>
+                </div>
+        <div class="outputTitleRight">
+            <div class="appSectionEnlarge themeToggleHost"></div>
+        </div>
+    </div>
+    <div id="debugStatus" class="debugStatus">Not running.</div>
+    <div class="debugGrid">
+        <section class="debugPanel">
+            <h4>Call stack</h4>
+            <ol id="stackList" class="debugList debugBody"></ol>
+        </section>
+        <section class="debugPanel">
+            <h4>Variables</h4>
+            <div id="varsTree" class="debugBody"></div>
+        </section>
+        <section class="debugPanel">
+            <h4>Watches</h4>
+            <form id="watchForm" class="watchForm">
+                <input id="watchInput" type="text" placeholder="Add a watch, e.g. len(path)"
+                       autocomplete="off" spellcheck="false">
+            </form>
+            <ul id="watchList" class="debugList debugBody"></ul>
+        </section>
+        <section class="debugPanel">
+            <h4>Trace
+                <label class="traceRecord" title="Log every line as it runs. Makes the program run slower.">
+                    <input type="checkbox" id="traceRecord"> Record all lines</label>
+                <button type="button" id="traceClear" class="traceClear" title="Clear the trace log">Clear</button>
+            </h4>
+            <ol id="traceList" class="debugList debugBody traceList"></ol>
+        </section>
+    </div>
+</div>
+<script>
+    function host() {
+        try { return window.opener && window.opener.PyNodeHost; } catch (e) { return null; }
+    }
+    function hostCall(fn) {
+        var h = host();
+        try { if (h && h[fn]) h[fn](window); } catch (e) { console.error("PyNode: opener unreachable", e); }
+    }
+
+    var view = null;
+    var TRACE_MAX = 2000;
+
+    function el(tag, cls, text) {
+        var e = document.createElement(tag);
+        if (cls) e.className = cls;
+        if (text !== undefined) e.textContent = text;
+        return e;
+    }
+
+    // One variable: "name = value  type", expandable when it has children.
+    function renderVar(v, previous) {
+        var changed = previous && Object.prototype.hasOwnProperty.call(previous, v.n) && previous[v.n] !== v.r;
+        var line = el("span", "debugVarLine" + (changed ? " changed" : ""));
+        line.appendChild(el("span", "debugVarName", v.n));
+        line.appendChild(el("span", "debugVarEq", " = "));
+        line.appendChild(el("span", "debugVarValue" + (v.ok === false ? " error" : ""), v.r));
+        if (v.t) line.appendChild(el("span", "debugVarType", v.t));
+        if (!v.c || !v.c.length) {
+            var li = el("li", "debugVar");
+            li.appendChild(line);
+            return li;
+        }
+        var item = el("li", "debugVar");
+        var det = document.createElement("details");
+        var sum = document.createElement("summary");
+        sum.appendChild(line);
+        det.appendChild(sum);
+        var ul = el("ul", "debugVarChildren");
+        v.c.forEach(function (c) { ul.appendChild(renderVar(c, null)); });
+        if (v.more) ul.appendChild(el("li", "debugVarMore", "\u2026 " + v.more + " more"));
+        det.appendChild(ul);
+        item.appendChild(det);
+        return item;
+    }
+
+    function asMap(list) {
+        var m = {};
+        (list || []).forEach(function (v) { m[v.n] = v.r; });
+        return m;
+    }
+
+    function section(title, vars, previous) {
+        var wrap = el("div", "debugSection");
+        wrap.appendChild(el("div", "debugSectionTitle", title));
+        var ul = el("ul", "debugVarList");
+        if (!vars.length) ul.appendChild(el("li", "debugEmpty", "(none)"));
+        vars.forEach(function (v) { ul.appendChild(renderVar(v, previous)); });
+        wrap.appendChild(ul);
+        return wrap;
+    }
+
+    function renderDebug(v) {
+        view = v;
+        var s = v.snapshot;
+        var status = document.getElementById("debugStatus");
+        if (!v.debuggable) status.textContent = "Debugging needs cross-origin isolation, which this page does not have.";
+        else if (!s) status.textContent = "Not running. Click in the editor's left margin to set a breakpoint, or press Step into.";
+        else if (s.state === "paused") {
+            var f = s.frames[s.selected || 0];
+            status.textContent = "Stopped at line " + (f ? f.line : s.line) + (f ? " in " + f.name : "") + ".";
+        }
+        else if (s.state === "running") status.textContent = "Running\u2026";
+        else status.textContent = s.reason === "stopped" ? "Stopped." : "Run ended.";
+        document.body.classList.toggle("debugStale", !(s && s.state === "paused"));
+
+        // Call stack
+        var stack = document.getElementById("stackList");
+        stack.innerHTML = "";
+        ((s && s.frames) || []).forEach(function (f, i) {
+            var li = el("li", "debugFrame" + (i === (s.selected || 0) ? " selected" : ""));
+            li.appendChild(el("span", "debugFrameName", f.name));
+            li.appendChild(el("span", "debugFrameLine", "line " + f.line));
+            li.title = "Show this frame's variables";
+            li.onclick = function () { var h = host(); if (h) h.inspectFrame(i); };
+            stack.appendChild(li);
+        });
+
+        // Variables: highlight what changed since the previous stop in the same function.
+        var tree = document.getElementById("varsTree");
+        tree.innerHTML = "";
+        if (s && s.frames) {
+            var p = s.previous;
+            var sameFrame = p && p.frames && s.frames.length && p.frames.length &&
+                p.frames[p.selected || 0] && p.frames[p.selected || 0].name === s.frames[s.selected || 0].name;
+            var cur = s.frames[s.selected || 0];
+            if (cur && cur.name !== "<main>") tree.appendChild(section("Locals", s.locals || [], sameFrame ? asMap(p.locals) : null));
+            tree.appendChild(section("Globals", s.globals || [], p ? asMap(p.globals) : null));
+        }
+
+        // Watches
+        var wl = document.getElementById("watchList");
+        wl.innerHTML = "";
+        (v.watches || []).forEach(function (expr, i) {
+            var shown = (s && s.state === "paused" && s.watches && s.watches[i]) || { n: expr, r: "\u2014" };
+            var li = renderVar(shown, null);
+            li.classList.add("debugWatch");
+            var x = el("button", "watchRemove", "\u00d7");
+            x.type = "button";
+            x.title = "Remove this watch";
+            x.onclick = function () {
+                var h = host();
+                if (h) h.setWatches(v.watches.filter(function (_, j) { return j !== i; }));
+            };
+            li.insertBefore(x, li.firstChild);
+            wl.appendChild(li);
+        });
+
+        document.getElementById("traceRecord").checked = !!v.record;
+    }
+
+    function traceItem(e) {
+        var li = el("li", "traceEntry");
+        li.appendChild(el("span", "traceLine", "L" + e.line));
+        li.appendChild(el("span", "traceFunc", e.func));
+        var changes = Object.keys(e.changed || {}).map(function (k) { return k + " = " + e.changed[k]; });
+        if (changes.length) li.appendChild(el("span", "traceChanged", changes.join(", ")));
+        li.title = "Show line " + e.line + " in the editor";
+        li.onclick = function () { jump(e.line); };
+        return li;
+    }
+
+    function resetTrace(entries) {
+        var list = document.getElementById("traceList");
+        list.innerHTML = "";
+        (entries || []).slice(-TRACE_MAX).forEach(function (e) { list.appendChild(traceItem(e)); });
+        list.scrollTop = list.scrollHeight;
+    }
+
+    function appendTrace(e) {
+        var list = document.getElementById("traceList");
+        var atBottom = list.scrollTop + list.clientHeight >= list.scrollHeight - 4;
+        list.appendChild(traceItem(e));
+        while (list.childNodes.length > TRACE_MAX) list.removeChild(list.firstChild);
+        if (atBottom) list.scrollTop = list.scrollHeight;
+    }
+
+    function jump(line) {
+        try {
+            var ed = window.opener.editor.monaco;
+            ed.revealLineInCenter(line);
+            ed.setPosition({ lineNumber: line, column: 1 });
+            ed.focus();
+        } catch (e) {}
+    }
+
+    document.getElementById("watchForm").addEventListener("submit", function (ev) {
+        ev.preventDefault();
+        var input = document.getElementById("watchInput");
+        var expr = input.value.trim();
+        var h = host();
+        if (!expr || !h) return;
+        h.setWatches(((view && view.watches) || []).concat([expr]));
+        input.value = "";
+    });
+    document.getElementById("traceRecord").addEventListener("change", function () {
+        var h = host();
+        if (h) h.setRecord(this.checked);
+    });
+    document.getElementById("traceClear").addEventListener("click", function () {
+        var h = host();
+        if (h) h.clearTrace();
+    });
+
+    // Debugger keys, and a real button's keyboard behaviour for the role="button" divs.
+    document.addEventListener("keydown", function (ev) {
+        var fn = ev.key === "F8" ? "continueRun" : ev.key === "F10" ? "stepOver"
+               : ev.key === "F11" ? (ev.shiftKey ? "stepOut" : "stepInto") : null;
+        var h = host();
+        if (!fn || !h) return;
+        ev.preventDefault();
+        h[fn]();
+    });
+    ["run", "stop", "restart", "stepOver", "stepInto", "stepOut"].forEach(function (id) {
+        document.getElementById(id).addEventListener("keydown", function (ev) {
+            if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); this.click(); }
+        });
+    });
+
+    // Announce ourselves: the host binds this window's buttons and sends the current stop
+    // and trace. index.html repeats it from its own onload, which window.open's named-window
+    // reuse can attach too late. Idempotent either way.
+    hostCall("debugOpened");
+    window.addEventListener("pagehide", function () { hostCall("debugClosing"); });
+</script>
+</body>
+</html>

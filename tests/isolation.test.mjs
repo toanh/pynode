@@ -18,7 +18,8 @@ import { join } from 'node:path';
 import { startHarness, waitForIsolation, TIMEOUTS } from './helpers.mjs';
 
 const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..');
-const PAGES = ['index.html', 'pynode_editor.html', 'pynode_console.html', 'pynode_output.html'];
+const PAGES = ['index.html', 'pynode_editor.html', 'pynode_console.html', 'pynode_output.html',
+    'pynode_docs.html', 'pynode_debug.html'];
 
 let harness;
 // coi: 'none' - no headers from the server, exactly like GitHub Pages.
@@ -38,7 +39,7 @@ test('every page loads coi-serviceworker.js from the root, before anything else'
     }
 });
 
-test('the service worker delivers isolation on all four pages', async () => {
+test('the service worker delivers isolation on every page', async () => {
     for (const p of PAGES) {
         const context = await harness.browser.newContext();
         try {
@@ -57,7 +58,7 @@ test('the service worker delivers isolation on all four pages', async () => {
 // is same-origin AND reports the same COOP value. The shim gives every page in scope
 // identical headers, so openers survive - but this is exactly the sort of thing that
 // differs between browsers, and the entire popup feature rests on it.
-test('window.opener and shared memory survive COOP across all three popups', async () => {
+test('window.opener and shared memory survive COOP across every popup', async () => {
     const context = await harness.browser.newContext();
     try {
         const page = await context.newPage();
@@ -66,7 +67,7 @@ test('window.opener and shared memory survive COOP across all three popups', asy
         await page.waitForFunction(() => window.editor_exists === true, { timeout: TIMEOUTS.editor });
         await page.evaluate(() => { window.__probe = 'hello-from-opener'; });
 
-        for (const fn of ['editorPopup', 'consolePopup', 'outputPopup']) {
+        for (const fn of ['editorPopup', 'consolePopup', 'outputPopup', 'debugPopup']) {
             const [popup] = await Promise.all([
                 page.waitForEvent('popup', { timeout: 15000 }),
                 page.evaluate((f) => window[f](700, 500), fn),

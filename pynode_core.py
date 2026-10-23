@@ -409,7 +409,10 @@ def reset():
     _send("js_clear", [])
 
 
-def run_code(src):
+USER_FILE = "<pynode>"
+
+
+def run_code(src, step_into=False):
     """Execute a user script.
 
     Deliberately NOT pynode_graphlib._exec_code(): that does `namespace = locals()`
@@ -418,12 +421,22 @@ def run_code(src):
     globals, which is why it works there. graphlib is frozen, so we build the namespace
     from a copy of its own module dict instead - which is what the docs promise users.
 
+    Compiled under USER_FILE so the debugger (pynode_debug.py) can tell the user's
+    frames from the library's; line numbers map one-to-one onto the editor. The
+    debugger is optional - the core still runs headlessly without it.
+
     Returns "ok", "stopped" or "error".
     """
     ns = dict(pynode_graphlib.__dict__)
     ns["__name__"] = "__main__"
     try:
-        exec(src, ns, ns)
+        code = compile(src, USER_FILE, "exec")
+        try:
+            import pynode_debug
+            pynode_debug.begin_run(ns, step_into)
+        except ImportError:
+            pass
+        exec(code, ns, ns)
         return "ok"
     except PynodeStop:
         return "stopped"

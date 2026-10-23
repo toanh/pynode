@@ -31,53 +31,175 @@ var PyNodeHost = (function () {
     var pending = [];                // command batches awaiting a frame
     var frameQueued = false;
     var positionsTimer = null;
-    var activeWin = null;            // the window that owns the render stream
 
     // --- render target ------------------------------------------------------
     // The detached output popup owns its own greuler_instance. Every function in
     // graph_api.js closes over its own window's global, so calling it on the popup
     // mutates the popup's graph. No changes to graph_api.js required.
     //
-    // EXACTLY ONE window owns the stream at a time, and it is the window whose Play button
-    // was clicked. Rendering to both was tried and reverted: each window runs an
-    // independent WebCola layout at its own canvas size, so the same graph settles into
-    // visibly different positions in each, and the two pictures never agree.
+    // EXACTLY ONE window owns the stream at a time. Rendering to both was tried and
+    // reverted: each window runs an independent WebCola layout at its own canvas size, so
+    // the same graph settles into visibly different positions in each, and the two
+    // pictures never agree.
     //
-    // The window that does NOT own the stream is blanked on Play, so it is unambiguous
-    // which one is live and no stale graph is left to be mistaken for the current run.
+    // Popping out MOVES the output: while the popup is open it owns the stream, whichever
+    // window's Play was pressed, and the docked panel shows a placeholder. popOut() and
+    // popIn() carry the current graph across with snapshotGraph()/restoreGraph(), so
+    // neither window ever opens blank or is left showing a stale picture.
+    //
+    // A popup that is unloading is flagged __pynodeClosing: it is still reachable (and
+    // `closed` is still false) during its pagehide, but must no longer be drawn to.
+
+    function outputPopupWin() {
+        try {
+            if (typeof pynode_output !== "undefined" && pynode_output &&
+                !pynode_output.closed && pynode_output !== window && !pynode_output.__pynodeClosing) {
+                return pynode_output;
+            }
+        } catch (e) {}
+        return null;
+    }
 
     function targets() {
         var list = [window];
-        try {
-            if (typeof pynode_output !== "undefined" && pynode_output &&
-                !pynode_output.closed && pynode_output !== window) {
-                list.push(pynode_output);
-            }
-        } catch (e) {}
+        var p = outputPopupWin();
+        if (p) list.push(p);
         return list;
     }
 
     function activeTarget() {
-        try {
-            if (activeWin && !activeWin.closed) return activeWin;
-        } catch (e) {}
-        return window;   // the owner was closed; fall back rather than render nowhere
+        var p = outputPopupWin();
+        return (p && p.__pynodeAdopted) ? p : window;
     }
 
-    // `origin` arrives from a button handler, so validate it really is a Window:
-    // init() wires el.onclick directly and click handlers are called with the DOM event
-    // as their first argument. Only a Window self-references through .window.
-    function setActive(origin) {
-        var next = window;
+    // Everything needed to rebuild the picture: the same keys pynode_graphlib's
+    // Node._data() / Edge._data() send, plus the current layout positions. A traversed
+    // edge's colour lives only in the DOM, so graph_api.js records it as keptStroke.
+    var NODE_KEYS = ["id", "label", "labelStyle", "topRightLabel", "topLeftLabel",
+        "topRightLabelStyle", "topLeftLabelStyle", "r", "color", "fixed", "static",
+        "ax", "ay", "rx", "ry", "relativePosition", "x", "y"];
+    var EDGE_KEYS = ["id", "weight", "directed", "lineWidth", "weightStyle", "stroke"];
+
+    function pick(obj, keys) {
+        var out = {};
+        keys.forEach(function (k) { if (obj[k] !== undefined) out[k] = obj[k]; });
+        return out;
+    }
+
+    function endId(v) { return (v !== null && typeof v === "object") ? v.id : v; }
+
+    function snapshotGraph(src) {
+        var snap = { size: [500, 400], nodes: [], edges: [] };
         try {
-            if (origin && origin.window === origin && !origin.closed) next = origin;
+            var g = src.greuler_instance;
+            if (!g || !g.graph) return snap;
+            snap.size = src.layoutSize();
+            snap.nodes = src.getGraphNodes().map(function (n) { return pick(n, NODE_KEYS); });
+            snap.edges = g.graph.edges.map(function (e) {
+                var d = pick(e, EDGE_KEYS);
+                d.source = endId(e.source);
+                d.target = endId(e.target);
+                if (e.keptStroke) { d.stroke = e.keptStroke; d.keptStroke = e.keptStroke; }
+                return d;
+            });
+        } catch (e) { console.error("PyNode: could not snapshot the graph", e); }
+        return snap;
+    }
+
+    function restoreGraph(dst, snap) {
+        try {
+            dst.js_clear();
+            if (!snap.nodes.length) return;
+            var items = snap.nodes.map(function (n) { return [0, n]; })
+                .concat(snap.edges.map(function (e) { return [1, e]; }));
+            dst.js_add_all(items);
+            // js_add_node spirals new nodes out from the centre; put them back where they
+            // were instead, scaled to this canvas, and let the layout settle from there.
+            var size = dst.layoutSize();
+            var sx = size[0] / (snap.size[0] || 500), sy = size[1] / (snap.size[1] || 400);
+            snap.nodes.forEach(function (n) {
+                if (n.static || typeof n.x !== "number") return;
+                var live = dst.greuler_instance.graph.getNode({ id: n.id });
+                if (live) { live.x = n.x * sx; live.y = n.y * sy; }
+            });
+            dst.updateLayout();
+            // Positions set here do not survive: the layout keeps moving the nodes and
+            // nothing pulls the graph back to the middle, so a popped-out graph settled
+            // in a corner. Re-centre once the layout has settled, and again in case it
+            // was still drifting (a run may be adding nodes at the same time).
+            [150, 600, 1500].forEach(function (ms) {
+                setTimeout(function () { recentreGraph(dst); }, ms);
+            });
+        } catch (e) { console.error("PyNode: could not restore the graph", e); }
+    }
+
+    // Move the free (non-static) nodes so the graph's bounding box sits in the middle of
+    // the canvas, shrinking it to fit if it is too big. Static nodes stay put: their
+    // position is the program's. Same mechanism as fixLayout() in js/resize.js - write
+    // x/y, then update() - which the layout honours.
+    function recentreGraph(w) {
+        try {
+            if (!w || w.closed || w.__pynodeClosing) return;
+            var nodes = w.getGraphNodes().filter(function (n) {
+                return !n.static && typeof n.x === "number" && typeof n.y === "number";
+            });
+            if (!nodes.length) return;
+            var size = w.layoutSize(), W = size[0], H = size[1], MARGIN = 20;
+            var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            nodes.forEach(function (n) {
+                var r = n.r || 12;
+                minX = Math.min(minX, n.x - r); maxX = Math.max(maxX, n.x + r);
+                minY = Math.min(minY, n.y - r); maxY = Math.max(maxY, n.y + r);
+            });
+            var k = Math.min(1, (W - 2 * MARGIN) / Math.max(maxX - minX, 1),
+                                (H - 2 * MARGIN) / Math.max(maxY - minY, 1));
+            var cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+            if (k === 1 && Math.abs(cx - W / 2) < 2 && Math.abs(cy - H / 2) < 2) return;
+            nodes.forEach(function (n) {
+                n.x = W / 2 + (n.x - cx) * k;
+                n.y = H / 2 + (n.y - cy) * k;
+                n.px = n.x; n.py = n.y;
+            });
+            w.greuler_instance.update();
         } catch (e) {}
-        targets().forEach(function (t) {
-            if (t === next) return;
-            try { if (typeof t.js_clear === "function") t.js_clear(); } catch (e) {}
-        });
-        activeWin = next;
+    }
+
+    function setPopped(on) {
+        try { document.body.classList.toggle("output-popped", on); } catch (e) {}
+    }
+
+    function popOut(win) {
+        try {
+            if (!win || win.closed || win.__pynodeAdopted || win.__pynodeClosing) return;
+            if (typeof win.js_clear !== "function") return;   // still loading
+            win.__pynodeAdopted = true;
+        } catch (e) { return; }
+        restoreGraph(win, snapshotGraph(window));
+        try { window.js_clear(); } catch (e) {}
+        setPopped(true);
+        bindAllButtons();
         registerClicks();
+        setState(state);   // show() only runs on a change; a mid-run popup would read PLAY
+    }
+
+    function popIn(win) {
+        try {
+            if (!win || win.__pynodeClosing) return;
+            win.__pynodeClosing = true;
+            if (!win.__pynodeAdopted) return;
+        } catch (e) { return; }
+        restoreGraph(window, snapshotGraph(win));
+        setPopped(false);
+        registerClicks();
+    }
+
+    // The popup vanished without its pagehide reaching us (a crashed or force-closed
+    // window). Its graph is gone with it; at least stop showing the placeholder.
+    function checkPopupAlive() {
+        if (document.body.classList.contains("output-popped") && !outputPopupWin()) {
+            setPopped(false);
+            registerClicks();
+        }
     }
 
     // Bind one output window's run/stop/restart buttons, capturing that window as the
@@ -149,7 +271,8 @@ var PyNodeHost = (function () {
     // Put the field where the user is actually looking.
     function consoleWindow() {
         try {
-            if (typeof pynode_console !== "undefined" && pynode_console && !pynode_console.closed) {
+            if (typeof pynode_console !== "undefined" && pynode_console && !pynode_console.closed &&
+                !pynode_console.__pynodeClosing) {
                 return pynode_console;
             }
         } catch (e) {}
@@ -214,6 +337,43 @@ var PyNodeHost = (function () {
         field.focus();
     }
 
+    // A popped-out console starts with the transcript so far, and a pending input()
+    // field moves with it - otherwise the prompt is left waiting in the docked console,
+    // where the user is no longer looking. Both are idempotent.
+    function consoleOpened(win) {
+        try {
+            if (!win || win.closed || win.__pynodeConsoleSeeded || win.__pynodeClosing) return;
+            var dst = win.document.getElementById("console");
+            var src = document.getElementById("console");
+            if (!dst || !src) return;
+            win.__pynodeConsoleSeeded = true;
+            var copy = src.cloneNode(true);
+            Array.prototype.forEach.call(copy.querySelectorAll(".consoleInput"), function (el) {
+                el.parentNode.removeChild(el);
+            });
+            dst.innerHTML = copy.innerHTML;
+            dst.scrollTop = dst.scrollHeight;
+        } catch (e) { return; }
+        reaskInput();
+    }
+
+    function consoleClosing(win) {
+        try {
+            if (!win || win.__pynodeClosing) return;
+            win.__pynodeClosing = true;
+            if (inputEl && inputEl.ownerDocument === win.document) reaskInput();
+        } catch (e) {}
+    }
+
+    // Recreate a pending input() field in whichever console is now current, keeping
+    // what the user had already typed.
+    function reaskInput() {
+        if (!inputEl) return;
+        var typed = inputEl.value;
+        askInput(pendingSeq);
+        if (inputEl) inputEl.value = typed;
+    }
+
     // --- control block ------------------------------------------------------
     function wake() {
         if (!ctrl) return;
@@ -236,6 +396,7 @@ var PyNodeHost = (function () {
     }
 
     function pushPositions() {
+        checkPopupAlive();
         if (!pos) return;
         var t = activeTarget();
         try {
@@ -271,6 +432,11 @@ var PyNodeHost = (function () {
         state = s;
         show(s === "idle" ? "runPlay" : s === "playing" ? "runPause"
            : s === "paused" ? "runResume" : "runPlayLoad");
+        // For CSS only: the header's Stop is coloured red, and should not look live
+        // when there is nothing to stop.
+        targets().forEach(function (t) {
+            try { t.document.body.setAttribute("data-run-state", s); } catch (e) {}
+        });
     }
 
     function onRunClick(origin) {
@@ -280,15 +446,15 @@ var PyNodeHost = (function () {
         else if (state === "paused") resume();
     }
 
-    // `origin` is the window whose Play button was clicked; it takes ownership of the
-    // render stream and every other output window is blanked. Omitted means the main page.
+    // `origin` is accepted and ignored: while the output is popped out the popup draws
+    // every run, wherever Play was pressed. Older popup pages still pass it.
     function play(origin) {
         if (!ready) return;
         try { saveCode(); } catch (e) {}
         removeInput();
         pending = [];
         writeOutput("", false);
-        setActive(origin);
+        registerClicks();
         setState("playing");
         pushPositions();
         worker.postMessage({ t: "run", src: getCode() });
@@ -420,9 +586,17 @@ var PyNodeHost = (function () {
         isReady: function () { return ready; },
         state: function () { return state; },
         isIsolated: function () { return isolated; },
-        // An output window appeared or went away. Ownership is only ever taken by pressing
-        // Play, so this just rebinds that window's buttons to route to itself and puts the
-        // click listeners back in the right state.
-        onRenderTargetChanged: function () { bindAllButtons(); registerClicks(); }
+        // An output window appeared or went away. Older popup pages only ever call this,
+        // so it also adopts an open popup that has not been popped out to yet.
+        onRenderTargetChanged: function () {
+            var p = outputPopupWin();
+            if (p) popOut(p);
+            bindAllButtons();
+            registerClicks();
+        },
+        outputOpened: function (win) { popOut(win); },
+        outputClosing: function (win) { popIn(win); },
+        consoleOpened: consoleOpened,
+        consoleClosing: consoleClosing
     };
 })();

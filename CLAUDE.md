@@ -72,15 +72,23 @@ The `js_*` string constants at the bottom of `pynode_core.py` are the protocol; 
 
 ### Page structure
 
-[index.html](index.html) is a single ~900-line file containing the app *and* the full documentation site. It hosts the Monaco editor ([js/monaco_setup.js](js/monaco_setup.js)), the console, the output SVG, and the worker host.
+[index.html](index.html) is the app: a slim three-column header — logo and Examples menu on the left, the icon-only colour-coded run controls (`#run` / `#stop` / `#restart`, same ids the host binds) centred, and the editor's file icons, theme toggle and Docs on the right — over an app band that fills the viewport. The editor has no title bar. The centre group is meant to take debugger buttons later. `js/pynode_host.js` sets `data-run-state` on each window's `<body>` so CSS can dim Stop when idle. The page itself does not scroll (above a ~540px minimum height) — the editor and console flex to fill the window. The layout is tuned for ~1280×630 CSS px, i.e. 1080p at 150% scaling, the common laptop default.
+
+The output box **scales** between 0.6× and 1.0× of 500×400 so that the console always fits under it (`--out-h` / `--out-w` in `style.css`, with the arithmetic in a comment there), but the graph's **coordinate space stays 500×400**: index.html sets `viewBox="0 0 500 400"` on the SVG, and `js/resize.js` takes the layout bounds from `layoutSize()` (greuler's options), never from `#outputBox.clientWidth`. Reading the box size there would squash every graph into the corner of the logical canvas. `node.set_position`, `node.position()` and clicks all work in logical coordinates; d3 maps the mouse through the viewBox. The output popup is different: its canvas really does resize, and `output_resize()` writes the new size into those same options.
+
+It hosts the Monaco editor ([js/monaco_setup.js](js/monaco_setup.js)), the console, the output SVG, and the worker host.
+
+The documentation and About text live **only** in [pynode_docs.html](pynode_docs.html). `toggleDocs()` in index.html fetches that page on first open and lifts its `.docsContent` into a slide-over drawer; `docsPopup()` opens the same page detached. Edit the docs there, and keep them self-contained inside `.docsContent`.
 
 `pynode_editor.html`, `pynode_console.html` and `pynode_output.html` are detached-window variants opened with `window.open`, tracked by the parent globals `pynode_editor` / `pynode_console` / `pynode_output`. Only **one** Python runtime exists, owned by the main page — `pynode_output.html` is now a pure render target with its own `greuler_instance`, and its buttons call `window.opener.PyNodeHost`. The two editors sync over `BroadcastChannel`, so the editor popup needs no `window.opener` at all.
 
-**Exactly one output window owns the render stream at a time, and it is the window whose Play button was clicked.** `play(origin)` and `restart(origin)` take that window; `PyNodeHost.setActive` stores it and `js_clear`s every other output window, so the one that is not running goes blank rather than sitting there showing a stale graph. Opening the popup does *not* hand it the stream — it stays blank until you press Play in it — and closing the owner falls back to the main page.
+**Exactly one output window owns the render stream at a time, and popping out moves it.** While `pynode_output.html` is open (and adopted) it draws *every* run, whichever window's Play was pressed; the docked panel shows an "Output is in a separate window · Bring it back" placeholder (`body.output-popped`). `play(origin)` / `restart(origin)` still accept an origin because older cached popup pages pass one, but it is ignored. `PyNodeHost.popOut` / `popIn` carry the current graph across in both directions with `snapshotGraph` / `restoreGraph`, so neither window opens blank or keeps a stale picture. The snapshot has to be taken while the source window is alive, so the popup announces itself (`outputOpened` on load, `outputClosing` on `pagehide`) and `index.html` repeats both from its own handlers — `window.open` reuses the named window, so those can attach too late, and a stale popup page may not announce at all. Everything is idempotent; a closing window is flagged `__pynodeClosing` and excluded from `targets()` immediately. One trap: `edge.traverse(keep_path=True)` colours the edge only in the DOM, so `graph_api.js` records it as `keptStroke` (deliberately not `stroke`, which the next `update()` would paint before the animation got there) for the snapshot to read.
+
+The console popup works the same way (`consoleOpened` / `consoleClosing`): it is seeded with the transcript so far, and a pending `input()` field moves into it and back.
 
 **Do not render to both windows at once.** It was tried and reverted: each window owns an independent `greuler_instance` running its own WebCola layout at its own canvas size, so the same graph settles into visibly different node positions in each and the two pictures never agree. Only `print` / `__state` / `__input` are handled window-independently, by the host — they drive the single console, button state machine and pending `input()` field. Button state (`show`) still updates *both* windows, because there is one worker and one run: Play in the popup must show PAUSE on the main page too, since Stop there stops that run.
 
-Clicks follow ownership. `registerClicks` installs the listener on the active window and **disables** it on the others by calling `registerClickListener()` with no argument — it assigns its parameter to a window-local `clickListener` that `clickNode` guards with `!== undefined`. A live listener on the inactive window let a click on a stale graph feed a bogus node id to the running program.
+Clicks follow ownership. `registerClicks` installs the listener on the window that owns the stream and **disables** it on the others by calling `registerClickListener()` with no argument — it assigns its parameter to a window-local `clickListener` that `clickNode` guards with `!== undefined`. A live listener on the inactive window let a click on a stale graph feed a bogus node id to the running program.
 
 `coi-serviceworker.js` must be the **first** script in every page's `<head>` and must live at the **repo root** — a service worker's scope is its own directory, and GitHub Pages cannot send the `Service-Worker-Allowed` header needed to widen it. It synthesizes the COOP/COEP headers that make `SharedArrayBuffer` available, and reloads the page once on first visit. Same-origin popups receive the same headers, so `window.opener` survives (verified).
 
@@ -91,7 +99,7 @@ Editor state persists in `localStorage` under the key `code`, and `?project=<nam
 `tests/` holds a Playwright suite run by Node's built-in test runner:
 
 ```
-cd tests && npm ci && npm test          # ~100s, 36 tests
+cd tests && npm ci && npm test          # ~120s, 60 tests
 npm test -- --test-name-pattern=theme   # filter
 npm test -- ./io.test.mjs               # one file
 ```

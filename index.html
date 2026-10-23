@@ -13,12 +13,12 @@
          wrong colours. Only writes the attribute when the user has chosen; while it is
          absent the stylesheet default applies, which is dark. -->
     <script>(function(){try{var t=localStorage.getItem("pynode-theme");if(t==="dark"||t==="light")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
-    <link href="css/style.css?version=0.9.14" rel="stylesheet" type="text/css">
-    <script src="js/pynode_theme.js?version=0.9.14"></script>
+    <link href="css/style.css?version=0.9.24" rel="stylesheet" type="text/css">
+    <script src="js/pynode_theme.js?version=0.9.21"></script>
     <link rel="icon" type="image/x-icon" href="favicon.ico">
-    <script src="js/resize.js?version=0.9.7"></script>
+    <script src="js/resize.js?version=0.9.16"></script>
     <script src="js/d3_controls.js?version=0.9.7"></script>
-    <script src="js/graph_api.js?version=0.9.7"></script>
+    <script src="js/graph_api.js?version=0.9.17"></script>
     <script src="js/d3/d3.v3.min.js?version=0.9.7"></script>
     <script src="js/cola/cola.v3.js?version=0.9.7"></script>
     <script src="js/greuler/greuler.js?version=0.9.8"></script>
@@ -27,44 +27,64 @@
         var pynode_output;
         var pynode_editor;
         var pynode_console;
+        var pynode_docs;
         var enable_editor = true;
 
+        // window.open features for a popup of the requested size, shrunk to fit the
+        // screen and centred on it. A fixed 800x690 put the output popup's button bar off
+        // the bottom of a 1080p screen at 150% scaling.
+        function popupFeatures(w, h) {
+            var availW = screen.availWidth || screen.width, availH = screen.availHeight || screen.height;
+            w = Math.min(w, availW - 40);
+            h = Math.min(h, availH - 80);
+            var left = (screen.availLeft || 0) + (availW - w) / 2;
+            var top = (screen.availTop || 0) + (availH - h) / 2;
+            return "directories=no,titlebar=no,toolbar=no,location=no,status=no,menubar=no,width=" + w + ",height=" + h + ",left=" + left + ",top=" + top;
+        }
+
+        function hostReady() { return typeof PyNodeHost !== "undefined"; }
+
+        // Popping the output out MOVES the live graph into the popup, and closing it moves
+        // the graph back - see popOut/popIn in js/pynode_host.js. The popup announces both
+        // itself; these handlers repeat it because window.open reuses the named window, so
+        // they can be attached too late to fire, and a stale cached popup page may not
+        // announce at all. Every call is idempotent.
         function outputPopup(w, h) {
-            var left = (screen.width / 2) - (w / 2);
-            var top = (screen.height / 2) - (h / 2);
             if (pynode_output !== undefined) {
+                if (hostReady()) PyNodeHost.outputClosing(pynode_output);
                 pynode_output.close()
             }
             // ?version= on the PAGE url, not just its script tags: a detached window's
             // behaviour lives in its own inline scripts, and without this a returning
             // browser can serve a stale copy of the page forever. Bump alongside the
             // script versions whenever a pynode_*.html inline script changes.
-            pynode_output = window.open("pynode_output.html?version=0.9.14", "PyNode Output", "directories=no,titlebar=no,toolbar=no,location=no,status=no,menubar=no,width=" + w + ",height=" + h + ",left=" + left + ",top=" + top);
-            pynode_output.onload = function () {
-                // Opening the popup does NOT hand it the render stream - only pressing
-                // Play does, and it then blanks whichever window was drawing. This just
-                // puts the click listeners back in the right state. The popup announces
-                // itself too: window.open reuses the named window, so this handler can be
-                // attached too late to fire.
-                if (typeof PyNodeHost !== "undefined") PyNodeHost.onRenderTargetChanged();
+            var win = pynode_output = window.open("pynode_output.html?version=0.9.22", "PyNode Output", popupFeatures(w, h));
+            win.onload = function () {
+                if (hostReady()) PyNodeHost.outputOpened(win);
             };
-            pynode_output.onbeforeunload = function () {
-                pynode_output = undefined;
-                if (typeof PyNodeHost !== "undefined") setTimeout(PyNodeHost.onRenderTargetChanged, 0);
+            win.onbeforeunload = function () {
+                if (hostReady()) PyNodeHost.outputClosing(win);
+                if (pynode_output === win) pynode_output = undefined;
             };
             if (window.focus) {
-                pynode_output.focus()
+                win.focus()
+            }
+            return false;
+        }
+
+        function bringBackOutput() {
+            if (pynode_output !== undefined) {
+                if (hostReady()) PyNodeHost.outputClosing(pynode_output);
+                pynode_output.close();
             }
             return false;
         }
 
         function editorPopup(w, h) {
-            var left = (screen.width / 2) - (w / 2);
-            var top = (screen.height / 2) - (h / 2);
             if (pynode_editor !== undefined) {
                 pynode_editor.close()
             }
-            pynode_editor = window.open("pynode_editor.html?version=0.9.14", "PyNode Editor", "directories=no,titlebar=no,toolbar=no,location=no,status=no,menubar=no,width=" + w + ",height=" + h + ",left=" + left + ",top=" + top);
+            pynode_editor = window.open("pynode_editor.html?version=0.9.24", "PyNode Editor", popupFeatures(w, h));
             pynode_editor.onbeforeunload = function () {
                 pynode_editor = undefined;
             };
@@ -74,25 +94,87 @@
             return false;
         }
 
+        // The popup starts with the transcript so far, and a pending input() field moves
+        // into it. Same belt-and-braces announcement as outputPopup.
         function consolePopup(w, h) {
-            var left = (screen.width / 2) - (w / 2);
-            var top = (screen.height / 2) - (h / 2);
             if (pynode_console !== undefined) {
+                if (hostReady()) PyNodeHost.consoleClosing(pynode_console);
                 pynode_console.close()
             }
-            pynode_console = window.open("pynode_console.html?version=0.9.14", "PyNode Console", "directories=no,titlebar=no,toolbar=no,location=no,status=no,menubar=no,width=" + w + ",height=" + h + ",left=" + left + ",top=" + top);
-            pynode_console.onbeforeunload = function () {
-                pynode_console = undefined;
+            var win = pynode_console = window.open("pynode_console.html?version=0.9.17", "PyNode Console", popupFeatures(w, h));
+            win.onload = function () {
+                if (hostReady()) PyNodeHost.consoleOpened(win);
+            };
+            win.onbeforeunload = function () {
+                if (hostReady()) PyNodeHost.consoleClosing(win);
+                if (pynode_console === win) pynode_console = undefined;
             };
             if (window.focus) {
-                pynode_console.focus()
+                win.focus()
             }
             return false;
         }
 
+        function docsPopup(w, h) {
+            if (pynode_docs !== undefined) {
+                pynode_docs.close()
+            }
+            pynode_docs = window.open("pynode_docs.html?version=0.9.23", "PyNode Docs", popupFeatures(w, h));
+            pynode_docs.onbeforeunload = function () {
+                pynode_docs = undefined;
+            };
+            if (window.focus) {
+                pynode_docs.focus()
+            }
+            return false;
+        }
+
+        // The drawer is empty until first opened: it fetches pynode_docs.html and lifts out
+        // its .docsContent, so the documentation markup lives in that one file only.
+        var docs_loaded = false;
+
+        function toggleDocs(open) {
+            if (open === undefined) open = !document.body.classList.contains("docs-open");
+            document.body.classList.toggle("docs-open", open);
+            var drawer = document.getElementById("docsDrawer");
+            drawer.setAttribute("aria-hidden", open ? "false" : "true");
+            if (open && !docs_loaded) {
+                docs_loaded = true;
+                fetch("pynode_docs.html?version=0.9.23")
+                    .then(function (r) { return r.text(); })
+                    .then(function (html) {
+                        var doc = new DOMParser().parseFromString(html, "text/html");
+                        drawer.querySelector(".docsContent").innerHTML = doc.querySelector(".docsContent").innerHTML;
+                    })
+                    .catch(function () {
+                        docs_loaded = false;
+                        drawer.querySelector(".docsContent").innerHTML = "<p>Could not load the documentation.</p>";
+                    });
+            }
+        }
+
+        function openExample(name) {
+            openCode(name, true);
+            var menu = document.querySelector(".examplesMenu");
+            if (menu) menu.open = false;
+        }
+
+        document.addEventListener("keydown", function (ev) {
+            if (ev.key === "Escape" && document.body.classList.contains("docs-open")) toggleDocs(false);
+        });
+
+        // A <details> menu does not close on an outside click by itself.
+        document.addEventListener("click", function (ev) {
+            var menu = document.querySelector(".examplesMenu");
+            if (menu && menu.open && !menu.contains(ev.target)) menu.open = false;
+        });
+
         window.onbeforeunload = function () {
             if (pynode_output !== undefined) {
                 pynode_output.close();
+            }
+            if (pynode_docs !== undefined) {
+                pynode_docs.close();
             }
             if (pynode_editor !== undefined) {
                 pynode_editor.close();
@@ -139,67 +221,64 @@
 <body class="pynode" onload="resize()" onresize="resize()">
 <div class="pynodeContainer">
     <div class="pageWholeWrapper">
-        <div class="pageTopWrapper">
-            <div class="pageTop">
-                <div class="pynodeLogo"><img src="images/logo.png" width="140" height="140"></div>
+        <!-- Three columns so the run controls sit at the true centre whatever the two sides
+             hold. The centre group is meant to grow (step over / step into later). -->
+        <header class="pageHeader">
+            <div class="headerLeft">
+                <div class="pynodeLogo"><img src="images/logo.png" width="28" height="28" alt=""></div>
                 <div class="pynodeTitle">PyNode</div>
-                <div class="pynodeSubtitle">
-                    <h3>Graph Theory Visualizer</h3>
-                </div>
-                <div class="pynodeAuthorSubtitle">
-                    <h5>By <a href="https://github.com/alexsocha">Alex Socha</a></h5>
-                    <h5>Updated editor and pyodide integration by <a href="https://github.com/toanh">Toan Huynh</a> with assistance from <a href="https://claude.ai">Anthropic Claude</a></h5>
-                </div>
-                <div class="pynodeDescription">
-                    <p>PyNode allows you to create, animate and display graphs with a simple Python interface, all
-                        within your browser.<br>Try the examples below, or write your own!</p>
-                    <p>Your code runs as real CPython, in the background, so the page stays responsive while it
-                        works &mdash; and <b>STOP</b> will always interrupt it, even in an endless loop.</p>
-                    <ul>
-                        <li>
-                            <p><a href="#" onclick="openCode('dijkstra'); return false;">Dijkstra's Algorithm</a></p>
-                        </li>
-                        <li>
-                            <p><a href="#" onclick="openCode('cannibals'); return false;">Cannibals and Missionaries</a>
-                            </p>
-                        </li>
-                        <li>
-                            <p><a href="#" onclick="openCode('prims'); return false;">Prim's Algorithm</a></p>
-                        </li>
-                        <li>
-                            <p><a href="#" onclick="openCode('dfs'); return false;">Depth First Search Algorithm</a></p>
-                        </li>
-                        <li>
-                            <p><a href="#" onclick="openCode('tictactoe'); return false;">Tic Tac Toe</a></p>
-                        </li>
-                    </ul>
-
-                    <br>
-                    <p>Note: You can now use <a href="https://github.com/algrx/algorithmx">AlgorithmX</a> to create even better network visualizations!</p>
+                <details class="examplesMenu">
+                    <summary title="Load an example program">Examples</summary>
+                    <div class="examplesMenuList">
+                        <a href="#" onclick="openExample('dijkstra'); return false;">Dijkstra's Algorithm</a>
+                        <a href="#" onclick="openExample('cannibals'); return false;">Cannibals and Missionaries</a>
+                        <a href="#" onclick="openExample('prims'); return false;">Prim's Algorithm</a>
+                        <a href="#" onclick="openExample('dfs'); return false;">Depth First Search Algorithm</a>
+                        <a href="#" onclick="openExample('tictactoe'); return false;">Tic Tac Toe</a>
+                    </div>
+                </details>
+                <!-- Open, Save, then the theme toggle (js/pynode_theme.js appends it to
+                     .themeToggleHost), left to right like a File menu. .headerActions strips
+                     are flex rows in source order; the title-bar strips elsewhere float
+                     right, which reverses them. pynode_editor.html uses the same order. -->
+                <div class="appSectionEnlarge headerActions themeToggleHost">
+                    <div class="appSectionBarIcon"><h3><a href="" title="Open a file"
+                                                          onclick="document.getElementById('file-input').click(); return false;"><img
+                            src="images/controls/import.png" width="16" height="16"></a></h3></div>
+                    <div class="appSectionBarIcon"><h3><a href="" title="Save to a file"
+                                                          onclick="userSaveCode(); return false;"><img
+                            src="images/controls/save.png" width="16" height="16"></a></h3></div>
                 </div>
             </div>
-        </div>
+            <!-- Same ids as the output popup's buttons: js/pynode_host.js binds #run/#stop/
+                 #restart and flips #runPlay/#runPlayLoad/#runPause/#runResume by id. -->
+            <div class="runControls" role="toolbar" aria-label="Run controls">
+                <div id="run" class="runButton" title="Play / pause" role="button" tabindex="0">
+                    <span id="runPlay" class="runIcon iconPlay"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8 5v14l11-7z"/></svg></span>
+                    <span id="runPlayLoad" class="runIcon iconLoad"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 4a8 8 0 1 0 8 8h-2.5A5.5 5.5 0 1 1 12 6.5z"/></svg></span>
+                    <span id="runPause" class="runIcon iconPause"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg></span>
+                    <span id="runResume" class="runIcon iconPlay"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8 5v14l11-7z"/></svg></span>
+                </div>
+                <div id="stop" class="runButton" title="Stop" role="button" tabindex="0">
+                    <span class="runIcon iconStop"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg></span>
+                </div>
+                <div id="restart" class="runButton" title="Restart" role="button" tabindex="0">
+                    <span class="runIcon iconRestart"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 5V1.5L7 6l5 4.5V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z"/></svg></span>
+                </div>
+            </div>
+            <div class="headerRight">
+                <div class="appSectionEnlarge headerActions">
+                    <div class="appSectionBarIcon"><h3><a href="pynode_editor.html" title="Open the editor in a new window"
+                                                          onclick="return editorPopup(800, 690)"><img
+                            src="images/controls/resize.png" width="20" height="20"></a></h3></div>
+                </div>
+                <a href="pynode_docs.html" class="docsButton" title="Documentation and about" onclick="toggleDocs(); return false;">Docs</a>
+            </div>
+        </header>
         <div class="appWrapper" id="appWrapper">
             <div class="appContainer" id="appContainer">
                 <div class="appLeft">
                     <div class="editorWrapper">
-                        <div class="appSectionTitle">
-                            <div class="floatLeft">
-                                <h3>Source</h3>
-                            </div>
-                            <div class="appSectionEnlarge">
-                                <div class="appSectionBarIconFirst"><h3><a href="pynode_editor.html"
-                                                                           onclick="return editorPopup(800, 690)"><img
-                                        src="images/controls/resize.png" width="20" height="20"></a></h3></div>
-                                <div class="appSectionBarIconDivider"></div>
-                                <div class="appSectionBarIcon"><h3><a href=""
-                                                                      onclick="document.getElementById('file-input').click(); return false;"><img
-                                        src="images/controls/import.png" width="16" height="16"></a></h3></div>
-                                <div class="appSectionBarIcon"><h3><a href=""
-                                                                      onclick="userSaveCode(); return false;"><img
-                                        src="images/controls/save.png" width="16" height="16"></a></h3></div>
-                            </div>
-                        </div>
                         <div id="editorBox">
                             <div id="editor"></div>
                         </div>
@@ -211,60 +290,30 @@
                             <div class="floatLeft">
                                 <h3>Output</h3>
                             </div>
+                            <div class="buttonBarLayoutPanel">
+                                <div id="layout1" title="Pan and zoom (drag nodes, scroll to zoom)">
+                                    <div id="layout1On" class="layoutButtonOn" style="display: none"><img
+                                            src="images/controls/layoutButton1.png" width="20" height="20"></div>
+                                    <div id="layout1Off" class="layoutButtonOff" style="display: inherit"><img
+                                            src="images/controls/layoutButton1.png" width="20" height="20"></div>
+                                </div>
+                                <div id="layout2" title="Autosize: keep the graph inside the canvas">
+                                    <div id="layout2On" class="layoutButtonOn" style="display: inherit"><img
+                                            src="images/controls/layoutButton2.png" width="20" height="20"></div>
+                                    <div id="layout2Off" class="layoutButtonOff" style="display: none"><img
+                                            src="images/controls/layoutButton2.png" width="20" height="20"></div>
+                                </div>
+                            </div>
                             <div class="appSectionEnlarge">
-                                <h3><a href="pynode_output.html" onclick="return outputPopup(800, 690)"><img
+                                <h3><a href="pynode_output.html" title="Open the output in a new window" onclick="return outputPopup(800, 690)"><img
                                         src="images/controls/resize.png" width="20" height="20"></a></h3>
                             </div>
                         </div>
                         <div id="outputBox">
                             <div id="output"></div>
-                        </div>
-                        <div class="editorButtonBar">
-                            <div id="run" class="editorButton">
-                                <div id="runPlay">
-                                    <div class="editorButtonIcon"><img src="images/controls/play.png" width="20"
-                                                                       height="20"></div>
-                                    <h4>PLAY</h4>
-                                </div>
-                                <div id="runPlayLoad">
-                                    <div class="editorButtonIcon"><img src="images/controls/loading.png"
-                                                                       width="20" height="20"></div>
-                                    <h4>LOADING</h4>
-                                </div>
-                                <div id="runPause">
-                                    <div class="editorButtonIcon"><img src="images/controls/pause.png" width="20"
-                                                                       height="20"></div>
-                                    <h4>PAUSE</h4>
-                                </div>
-                                <div id="runResume">
-                                    <div class="editorButtonIcon"><img src="images/controls/play.png" width="20"
-                                                                       height="20"></div>
-                                    <h4>RESUME</h4>
-                                </div>
-                            </div>
-                            <div id="stop" class="editorButton">
-                                <div class="editorButtonIcon"><img src="images/controls/stop.png" width="20"
-                                                                   height="20"></div>
-                                <h4>STOP</h4>
-                            </div>
-                            <div id="restart" class="editorButton">
-                                <div class="editorButtonIcon"><img src="images/controls/restart.png" width="20"
-                                                                   height="20"></div>
-                                <h4>RESTART</h4>
-                            </div>
-                            <div class="buttonBarLayoutPanel">
-                                <div id="layout1">
-                                    <div id="layout1On" class="layoutButtonOn" style="display: inherit"><img
-                                            src="images/controls/layoutButton1.png" width="20" height="20"></div>
-                                    <div id="layout1Off" class="layoutButtonOff" style="display: none"><img
-                                            src="images/controls/layoutButton1.png" width="20" height="20"></div>
-                                </div>
-                                <div id="layout2">
-                                    <div id="layout2On" class="layoutButtonOn" style="display: none"><img
-                                            src="images/controls/layoutButton2.png" width="20" height="20"></div>
-                                    <div id="layout2Off" class="layoutButtonOff" style="display: inherit"><img
-                                            src="images/controls/layoutButton2.png" width="20" height="20"></div>
-                                </div>
+                            <div class="outputPoppedNote">
+                                <p>Output is in a separate window.</p>
+                                <p><a href="" title="Close the separate window and show the output here" onclick="return bringBackOutput()">Bring it back</a></p>
                             </div>
                         </div>
                     </div>
@@ -274,7 +323,7 @@
                                 <h3>Console</h3>
                             </div>
                             <div class="appSectionEnlarge">
-                                <h3><a href="pynode_console.html" onclick="return consolePopup(800, 690)"><img
+                                <h3><a href="pynode_console.html" title="Open the console in a new window" onclick="return consolePopup(800, 690)"><img
                                         src="images/controls/resize.png" width="20" height="20"></a></h3>
                             </div>
                         </div>
@@ -287,321 +336,30 @@
             </div>
         </div>
         <script> resize(); </script>
-        <div class="pageBottomWrapper">
-            <div class="pageWhole">
-                <h1>Documentation</h1>
-                <h4>&nbsp;</h4>
-                <h2>Graph</h2>
-                <ul>
-                    <li>
-                        <p><code>graph.add_node(node)</code> - Adds a node to the graph.</p>
-                    </li>
-                    <li>
-                        <p><code>graph.add_node(id=None, value=id)</code> - Creates a <code class="codeInline">Node(id,
-                            value)</code> and adds it to the graph.</p>
-                    </li>
-                    <li>
-                        <p><code>graph.remove_node(node)</code> - Removes a node from the graph.</p>
-                    </li>
-                    <li>
-                        <p><code>graph.node(id)</code> - Returns a node in the graph by its <code
-                                class="codeInline">id</code>.</p>
-                    </li>
-                    <li>
-                        <p><code>graph.nodes()</code> - Returns a list of all nodes in the graph.</p>
-                    </li>
-                    <p>&nbsp;</p>
-                    <li>
-                        <p><code>graph.add_edge(edge)</code> - Adds an edge to the graph.</p>
-                    </li>
-                    <li>
-                        <p><code>graph.add_edge(source, target, weight=None, directed=False)</code> - Creates an <code
-                                class="codeInline">Edge(source, target, weight, directed)</code> and adds it to the
-                            graph.</p>
-                    </li>
-                    <li>
-                        <p><code>graph.remove_edge(edge)</code> - Removes an edge from the graph.</p>
-                    </li>
-                    <li>
-                        <p><code>graph.remove_edge(node1, node2, directed=False)</code> - Removes edge(s) between <code
-                                class="codeInline">node1</code> and <code class="codeInline">node2</code>. If <code
-                                class="codeInline">directed</code> is set, only edges beginning at <code
-                                class="codeInline">node1</code> will be removed.</p>
-                    </li>
-                    <p>&nbsp;</p>
-                    <li>
-                        <p><code>graph.has_node(node)</code> - Checks whether a node has been added to the graph.</p>
-                    </li>
-                    <li>
-                        <p><code>graph.has_edge(edge)</code> - Checks whether an edge has been added to the graph.</p>
-                    </li>
-                    <li>
-                        <p><code>graph.adjacent(node1, node2, directed=False)</code> - Checks whether an edge exists
-                            between <code class="codeInline">node1</code> and <code class="codeInline">node2</code>. If
-                            <code class="codeInline">directed</code> is set, the edge must begin at <code
-                                    class="codeInline">node1</code>.</p>
-                    </li>
-                    <li>
-                        <p><code>graph.edges_between(node1, node2, directed=False)</code> - Returns a list of all edges
-                            between <code class="codeInline">node1</code> and <code class="codeInline">node2</code>. If
-                            <code class="codeInline">directed</code> is set, only edges beginning at <code
-                                    class="codeInline">node1</code> will be included.</p>
-                    </li>
-                    <p>&nbsp;</p>
-                    <li>
-                        <p><code>graph.set_directed(directed=True)</code> - Sets whether all edges in the graph are
-                            directed.</p>
-                    </li>
-                    <li>
-                        <p><code>graph.adjacency_matrix()</code> - Creates and returns an adjacency matrix
-                            (2-dimensional dictionary, using node <code class="codeInline">id</code> values as keys) for
-                            the graph.</p>
-                    </li>
-                    <li>
-                        <p><code>graph.add_all(elements)</code> - Adds a list of <code class="codeInline">Node</code>
-                            and/or <code class="codeInline">Edge</code> elements to the graph.</p>
-                    </li>
-                    <li>
-                        <p><code>graph.remove_all(elements)</code> - Removes a list of <code
-                                class="codeInline">Node</code> and/or <code class="codeInline">Edge</code> elements from
-                            the graph.</p>
-                    </li>
-                    <li>
-                        <p><code>graph.random(order, size, connected=True, multigraph=False, initial_id=0)</code> -
-                            Returns a list of randomly connected nodes and edges, with <code
-                                    class="codeInline">order</code> specifying the amount of nodes and <code
-                                    class="codeInline">size</code> specifying the amount of edges. If <code
-                                    class="codeInline">connected</code> is set, a path will exist between any pair of
-                            nodes (unless the amount of edges makes this impossible). If <code class="codeInline">multigraph</code>
-                            is set, a pair of nodes may be connected by multiple edges. Nodes are assigned incremental
-                            <code class="codeInline">id</code> values starting at <code
-                                    class="codeInline">initial_id</code>.</p>
-                    </li>
-                    <li>
-                        <p><code>graph.order()</code>, <code>graph.size()</code> - Returns the number of nodes/edges in
-                            the graph.</p>
-                    </li>
-                    <!--<li>
-                      <p><code>graph.set_spread(spread=80)</code> - Sets the visual sparseness of the graph (i.e. the minimum edge length).</p>
-                    </li>-->
-                    <li>
-                        <p><code>graph.clear()</code> - Deletes all nodes and edges from the graph.</p>
-                    </li>
-                </ul>
-                <p>Note: All functions containing node parameters accept either a <code class="codeInline">Node</code>
-                    instance or node <code class="codeInline">id</code> value.</p>
-                <h2>&nbsp;</h2>
-                <h2>Node</h2>
-                <ul>
-                    <li>
-                        <p><code>Node(id=None, value=id)</code> - Creates a node with the specified <code
-                                class="codeInline">id</code> and <code class="codeInline">value</code>. Assigns a unique
-                            <code class="codeInline">id</code> integer if the specified <code
-                                    class="codeInline">id</code> is <code class="codeInline">None</code>.</p>
-                    </li>
-                    <li>
-                        <p><code>node.id()</code> - Returns the <code class="codeInline">id</code> of the node.</p>
-                    </li>
-                    <li>
-                        <p><code>node.set_value()</code>, <code>node.value()</code> - Sets/gets the <code
-                                class="codeInline">value</code> of the node.</p>
-                    </li>
-                    <li>
-                        <p><code>node.incident_edges()</code>, <code>node.incoming_edges()</code>, <code>node.outgoing_edges()</code>
-                            - Returns a list of the node's incident/incoming/outgoing edges.</p>
-                    </li>
-                    <li>
-                        <p><code>node.adjacent_nodes()</code>, <code>node.predecessor_nodes()</code>, <code>node.successor_nodes()</code>
-                            - Returns a list of the node's adjacent/predecessor/successor nodes.</p>
-                    </li>
-                    <li>
-                        <p><code>node.degree()</code>, <code>node.indegree()</code>, <code>node.outdegree()</code> -
-                            Returns the node's degree/indegree/ outdegree.</p>
-                    </li>
-                    <li>
-                        <p><code>node.set_attribute(name, value)</code>, <code>node.attribute(name)</code> - Sets/gets
-                            custom attributes for the node.</p>
-                    </li>
-                    <li>
-                        <p><code>node.set_priority(value)</code>, <code>node.priority(name)</code> - Sets/gets a
-                            priority value used for comparison.</p>
-                    </li>
-                    <p>&nbsp;</p>
-                    <li>
-                        <p><code>node.set_position(x, y, relative=False)</code> - Sets the static position of the node.
-                            <code class="codeInline">x</code> and <code class="codeInline">y</code> are pixel
-                            coordinates, with (0, 0) being
-                            the top-left corner of the output window (the standard size of the window is 500x400). If
-                            <code class="codeInline">relative</code> is
-                            set, <code class="codeInline">x</code> and <code class="codeInline">y</code> should instead
-                            be values between 0.0 and 1.0, specifying the node's position as a percentage of the
-                            window size.</p>
-                    </li>
-                    <li>
-                        <p><code>node.position()</code> - Returns a tuple with the (x, y) coordinates of the node,
-                            as of the most recent frame. Call it after a <code class="codeInline">pause</code>, or
-                            from a delayed or click-listener function, so the layout has had a chance to settle.
-                    </li>
-                    <li>
-                        <p><code>node.set_label(value, label_id=0)</code>, <code>node.label(label_id)</code> - Sets/gets
-                            the value of additional labels for the node (Use <code class="codeInline">label_id=0</code>
-                            for the top-right label and <code class="codeInline">label_id=1</code> for the top
-                            left-label).</p>
-                    </li>
-                    <li>
-                        <p><code>node.set_size(size=12)</code>, <code>node.size()</code> - Sets/gets the radius of the
-                            node.</p>
-                    </li>
-                    <li>
-                        <p><code>node.set_color(color=Color.DARK_GREY)</code>, <code>node.color()</code> - Sets/gets the
-                            color of the node.</p>
-                    </li>
-                    <li>
-                        <p><code>node.set_value_style(size=13, color=Color.WHITE, outline=None)</code> - Sets the
-                            appearance of the node's value text (if no <code class="codeInline">outline</code> is
-                            specified,
-                            the node's background color will be used for the outline).</p>
-                    </li>
-                    <li>
-                        <p><code>node.set_label_style(size=10, color=Color.GREY, outline=None, lable_id=None)</code> -
-                            Sets the appearance of the node's label text (if no <code class="codeInline">lable_id</code>
-                            is specified, both labels will be affected).</p>
-                    </li>
-                    <li>
-                        <p><code>node.highlight(color=node.color(), size=node.size()*1.5)</code> - Performs a highlight
-                            animation by temporarily changing the size and color of the node.</p>
-                    </li>
-                </ul>
-                <p>&nbsp;</p>
-                <h2>Edge</h2>
-                <ul>
-                    <li>
-                        <p><code>Edge(source, target, weight=None, directed=False)</code> - Creates an edge between the
-                            specified <code class="codeInline">source</code> and <code class="codeInline">target</code>
-                            nodes, with optional <code class="codeInline">weight</code> and <code class="codeInline">directed</code>
-                            properties.</p>
-                    </li>
-                    <li>
-                        <p><code>edge.source()</code>, <code>edge.target()</code> - Returns the edge's source/target
-                            nodes.</p>
-                    </li>
-                    <li>
-                        <p><code>edge.set_weight(weight=None)</code>, <code>edge.weight()</code> - Sets/gets the weight
-                            of the edge.</p>
-                    </li>
-                    <li>
-                        <p><code>edge.set_directed(directed=True)</code>, <code>edge.directed()</code> - Sets/gets
-                            whether the edge is directed.</p>
-                    </li>
-                    <li>
-                        <p><code>edge.other_node(node)</code> - Returns a node connected by the edge, other than the
-                            node specified.</p>
-                    </li>
-                    <li>
-                        <p><code>edge.set_attribute(name, value)</code>, <code>edge.attribute(name)</code> - Sets/gets
-                            custom attributes for the edge.</p>
-                    </li>
-                    <li>
-                        <p><code>edge.set_priority(value)</code>, <code>edge.priority(name)</code> - Sets/gets a
-                            priority value used for comparison.</p>
-                    </li>
-                    <p>&nbsp;</p>
-                    <li>
-                        <p><code>edge.set_width(width=2)</code>, <code>edge.width()</code> - Sets/gets the width of the
-                            edge.</p>
-                    </li>
-                    <li>
-                        <p><code>edge.set_color(color=Color.LIGHT_GREY)</code>, <code>edge.color()</code> - Sets/gets
-                            the color of the edge.</p>
-                    </li>
-                    <li>
-                        <p><code>edge.set_weight_style(size=10, color=Color.GREY, outline=None)</code> - Sets the
-                            appearance of the edge's weight text.</p>
-                    </li>
-                    <li>
-                        <p><code>edge.highlight(color=edge.color(), width=edge.width()*2)</code> - Performs a highlight
-                            animation by temporarily changing the width and color of the edge.</p>
-                    </li>
-                    <li>
-                        <p><code>edge.traverse(initial_node=edge.source(), color=Color.RED, keep_path=True)</code> -
-                            Performs a traversal animation on the edge, beginning at <code class="codeInline">initial_node</code>
-                            and using the specified <code class="codeInline">color</code>. If <code class="codeInline">keep_path</code>
-                            is set, the edge will remain colored.</p>
-                    </li>
-                </ul>
-                <p>&nbsp;</p>
-                <h2>Miscellaneous</h2>
-                <ul>
-                    <li>
-                        <p><code>Color(red, green, blue)</code> - Custom color for use in node and edge animations,
-                            using 0-255 values for each component.</p>
-                    </li>
-                    <li>
-                        <p><code>Color.RED</code>, <code>Color.GREEN</code>, <code>Color.BLUE</code>,
-                            <code>Color.YELLOW</code>, <code>Color.WHITE</code>, <code>Color.LIGHT_GREY</code>, <code>Color.GREY</code>,
-                            <code>Color.DARK_GREY</code>, <code>Color.BLACK</code>, <code>Color.TRANSPARENT</code> -
-                            Predefined colors for use in node and edge animations.</p>
-                    </li>
-                    <li>
-                        <p><code>pause(time)</code> - Pauses your code for the specified number of milliseconds,
-                            while the graph continues to animate. Scheduled <code class="codeInline">delay</code>
-                            functions and node clicks are still handled during a pause.</p>
-                    </li>
-                    <li>
-                        <p><code>delay(func, time, args=[], repeat=False)</code> - Executes a function after the
-                            specified number of milliseconds, with the optional <code class="codeInline">args</code>
-                            list of parameters. If <code class="codeInline">repeat</code> is set, the function will
-                            execute
-                            continuously until the delay is cancelled. Returns a <code
-                                    class="codeInline">delay_id</code> integer referencing the delay.</p>
-                    </li>
-                    <li>
-                        <p><code>cancel_delay(delay_id)</code> - Cancels a scheduled delay event.</p>
-                    </li>
-                    <li>
-                        <p><code>register_click_listener(func)</code> - Registers a function which will be called
-                            whenever a node is clicked. The function must include a <code class="codeInline">node</code>
-                            parameter (e.g. <code class="codeInline">def on_click(node)</code>), which will receive the
-                            instance of the clicked node.</p>
-                    </li>
-                </ul>
-
+        <!-- Documentation lives in pynode_docs.html. toggleDocs() fetches it once and lifts
+             its .docsContent in here, so the markup exists in exactly one place. -->
+        <aside id="docsDrawer" class="docsDrawer" aria-hidden="true" aria-label="Documentation">
+            <div class="appSectionTitle docsDrawerBar">
+                <div class="floatLeft">
+                    <h3>Documentation</h3>
+                </div>
+                <div class="appSectionEnlarge">
+                    <div class="appSectionBarIconFirst"><h3><a href="" class="docsClose" title="Close (Esc)"
+                                                               onclick="toggleDocs(false); return false;">&times;</a></h3></div>
+                    <div class="appSectionBarIcon"><h3><a href="pynode_docs.html" title="Open in a new window"
+                                                          onclick="toggleDocs(false); return docsPopup(800, 690)"><img
+                            src="images/controls/resize.png" width="20" height="20"></a></h3></div>
+                </div>
             </div>
-            <div class="pageWhole">
-                <h1>About</h1>
-                <p>&nbsp;</p>
-                <p>PyNode was designed and created by <a href="https://github.com/alexsocha">Alex Socha</a> with updates by <a href="https://github.com/toanh">Toan Huynh</a>, using the following technologies:</p>
-                <ul>
-                    <li>
-                        <p><a href="http://marvl.infotech.monash.edu/webcola/">WebCola</a> - Monash Adaptive
-                            Visualization Lab (<a href="https://github.com/tgdwyer/WebCola">GitHub</a>)</p>
-                    </li>
-                    <li>
-                        <p><a href="https://d3js.org/" target="_blank">D3.js</a> - Mike Bostock (<a
-                                href="https://github.com/d3/d3">GitHub</a>)</p>
-                    </li>
-                    <li>
-                        <p><a href="https://maurizzzio.github.io/greuler/#/" target="_blank">greuler</a> - Mauricio
-                            Poppe (<a href="https://github.com/maurizzzio/greuler/">GitHub</a>)</p>
-                    </li>
-                    <li>
-                        <p><a href="https://pyodide.org/" target="_blank">Pyodide</a> - Pyodide contributors (<a
-                                href="https://github.com/pyodide/pyodide">GitHub</a>)</p>
-                    </li>
-                    <li>
-                        <p><a href="https://microsoft.github.io/monaco-editor/" target="_blank">Monaco Editor</a> -
-                            Microsoft (<a href="https://github.com/microsoft/monaco-editor">GitHub</a>)</p>
-                    </li>
-                </ul>
-            </div>
-        </div>
+            <div class="docsContent"><p>Loading...</p></div>
+        </aside>
     </div>
 </div>
 <!-- No ?version= on the AMD base path: Monaco's loader builds child-module URLs from it
      itself and will not propagate a query string. Bump the js/monaco/ directory name instead. -->
 <script src="js/monaco/vs/loader.js"></script>
 <script src="js/pynode_completions.js?version=0.9.11"></script>
-<script src="js/monaco_setup.js?version=0.9.11"></script>
+<script src="js/monaco_setup.js?version=0.9.24"></script>
 <script>
     resize();
 
@@ -619,6 +377,12 @@
         if (enable_editor) applyCode(src);
     }
 
+    // Undoable write, for loading a file or an example over what the user had: one
+    // Ctrl+Z puts their previous code back. applyCode resets the undo stack.
+    function replaceCode(src) {
+        if (window.editor) window.editor.replaceValue(src);
+    }
+
     function saveCode() {
         localStorage.setItem("code", getCode())
     }
@@ -632,13 +396,15 @@
         applyCode(src);
     }
 
-    function openCode(name) {
+    // `undoable`: the Examples menu passes true so the user can undo back to their own
+    // code; the first-visit default load does not, as undoing to an empty editor is noise.
+    function openCode(name, undoable) {
         var client = new XMLHttpRequest();
         client.open("GET", "pynode_projects/" + name + ".py");
         client.onreadystatechange = function () {
             if (client.readyState == 4) {
                 if (editor_exists) {
-                    applyCode(client.responseText);
+                    (undoable ? replaceCode : applyCode)(client.responseText);
                     saveCode();
                 }
             }
@@ -692,10 +458,12 @@
         var reader = new FileReader();
         reader.onload = (function (theFile) {
             return function (e) {
-                setCode(e.target.result);
+                if (enable_editor) replaceCode(e.target.result);
             };
         })(file);
         reader.readAsText(file);
+        // Otherwise choosing the same file again fires no change event.
+        event.target.value = "";
     }
 
     function userSaveCode() {
@@ -711,17 +479,34 @@
         target: '#output',
         width: 500,
         height: 400
-    });
+    }).update();   // creates .root, as pynode_output.html does
+    // The layout always works in a 500x400 space - the docs promise that size, and
+    // node.set_position takes pixel coordinates against it - while css/style.css scales
+    // the box to fit short viewports. The viewBox maps one onto the other; d3.mouse goes
+    // through getScreenCTM, so clicks and drags still land on the right node.
+    greuler_instance.root.attr("viewBox", "0 0 500 400").attr("preserveAspectRatio", "xMidYMid meet");
+    // Apply whichever layout mode the buttons show (autosize by default). The mode used to
+    // be applied only when a layout button was CLICKED, so the page showed one mode while
+    // running another, and pan/zoom needed toggling away and back before it responded.
+    set_layout_type();
 </script>
 <!-- Python now runs as real CPython inside js/pynode_worker.js. The button state machine
      that used to live in pynode_core.py (driven from Brython via document[...].bind) has
      moved into js/pynode_host.js, because a worker has no DOM. -->
-<script src="js/pynode_host.js?version=0.9.14"></script>
+<script src="js/pynode_host.js?version=0.9.23"></script>
 <script>
     // The button background and cursor used to be set here as INLINE styles, which beat
     // any stylesheet rule and made the buttons untouchable by theming. They now live in
     // css/style.css under the #run/#stop/#restart rule.
     PyNodeHost.init();
+
+    // The header run controls are focusable divs (role="button"); give them the keyboard
+    // behaviour a real button has. .click() goes through whatever onclick PyNodeHost bound.
+    ["run", "stop", "restart"].forEach(function (id) {
+        document.getElementById(id).addEventListener("keydown", function (ev) {
+            if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); this.click(); }
+        });
+    });
 
     document.getElementById("layout1").onclick = function () {
         if (document.getElementById("layout1On").style.display === "none") {
@@ -744,6 +529,7 @@
 </script>
 
 <!-- Relevant links that are not directly referenced. Allows website to be properly read with automatic web crawling. -->
+<a hidden style="display:none" href="pynode_docs.html">&nbsp</a>
 <a hidden style="display:none" href="pynode_core.py">&nbsp</a>
 <a hidden style="display:none" href="pynode_graphlib.py">&nbsp</a>
 <a hidden style="display:none" href="pynode_projects/cannibals.py">&nbsp</a>

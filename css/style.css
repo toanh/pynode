@@ -52,6 +52,15 @@
     --c-ok: #6dd36d;
     --c-err: #ff6b6b;
     --c-warn: #e0a030;
+
+    /* Header run controls. The glyph colours are shared by both palettes because the
+       header they sit in is dark grey in both; only the button face changes. */
+    --run-bg: #3a3a3d;
+    --run-bg-hover: #4a4a4f;
+    --run-play: #4ade80;
+    --run-pause: #fbbf24;
+    --run-stop: #f87171;
+    --run-restart: #60a5fa;
 }
 
 :root[data-theme="light"] {
@@ -86,6 +95,9 @@
     --c-ok: green;
     --c-err: red;
     --c-warn: #a06000;
+
+    --run-bg: #3d3d3d;
+    --run-bg-hover: #2f2f2f;
 }
 
 html {
@@ -249,9 +261,31 @@ a.anchor {
 /* PYNODE
    ================================================== */
 
+/* The app fills the viewport and the page itself does not scroll: the only scrollbars are
+   Monaco's, the console's and the docs drawer's. The header is fixed at --header-h and
+   the app band takes exactly the rest.
+
+   Tuned for ~1280x630 CSS px (1080p at 150% scaling), the common laptop default, where
+   the output must stay at its full 500x400 AND the console must still fit below it.
+   Vertical space is what runs out, so the main page's chrome is compact (see COMPACT
+   MAIN PAGE): the run controls live in the page header, the layout toggles in the
+   Output title bar, and the panels have no decorative bottom borders. --out-h is the height left over once the fixed
+   parts of the right column are paid for:
+       header 40 + app padding 16 + output title 32 + gap 8 + console minimum 120 = 216px
+   Change any of those and this number must follow. At 630px that leaves exactly 400 for
+   the canvas and 134 for the console; on shorter screens the box scales down (keeping
+   the 5:4 shape of the 500x400 logical canvas, see the viewBox set in index.html) rather
+   than pushing the console off the bottom. */
+body.pynode {
+    --header-h: 40px;
+    --out-h: clamp(240px, calc(100vh - 216px), 400px);
+    --out-w: calc(var(--out-h) * 1.25);
+    /* Only shows a scrollbar below the minimum height of .appWrapper. */
+    overflow: auto;
+}
+
 body.pynode .pageWholeWrapper {
     width: 100%;
-    padding-bottom: 100px;
 }
 
 body.pynode .pageBanner {
@@ -264,31 +298,30 @@ body.pynode .pageBanner {
     color: var(--text-invert);
 }
 
-body.pynode .pageTopWrapper {
-    height: 500px;
-    position: relative;
-}
-
 body.pynode .appWrapper {
-    height: 760px;
+    height: calc(100vh - var(--header-h));
+    /* 240px output + 216px fixed, less the header. Below this the page scrolls once
+       rather than clipping the console. */
+    min-height: 416px;
+    box-sizing: border-box;
     background-color: var(--bg-app);
     position: relative;
-    padding-bottom: 20px;
-    padding-top: 20px;
+    padding-bottom: 8px;
+    padding-top: 8px;
     box-shadow: inset 0 16px 20px -20px var(--shadow-strong), inset 0 -16px 20px -20px var(--shadow-mid);
 }
 
 body.pynode .appContainer {
     height: 100%;
-    width: 100%;
-    visibility: hidden;
-    max-width: 1500px;
+    box-sizing: border-box;
+    display: flex;
+    gap: 8px;
+    padding: 0 8px;
 }
 
 body.pynode .appLeft {
-    width: calc(100% - 560px);
-    padding-left: 20px;
-    float: left;
+    flex: 1;
+    min-width: 0;
     height: 100%;
 }
 
@@ -303,38 +336,13 @@ body.pynode .editorWrapper, body.pynode_editor .editorWrapper {
 
 body.pynode #editorBox {
     width: 100%;
-    height: 100%;
+    height: 100%;   /* no title bar: its icons moved up into the page header */
     visibility: hidden;
 }
 
 body.pynode_editor #editorBox {
     width: 100%;
     height: calc(100% - 40px);
-}
-
-body.pynode .editorButtonBar, body.pynode_output .editorButtonBar {
-    width: 100%;
-    height: 35px;
-    background-color: var(--bg-inset);
-    padding-top: 5px;
-    padding-left: 0px;
-}
-
-body.pynode .editorButton, body.pynode_output .editorButton {
-    width: 100px;
-    height: 23px;
-    background-color: var(--bg-button);
-    padding-top: 7px;
-    padding-left: 5px;
-    color: var(--text-invert);
-    margin-left: 5px;
-    float: left;
-}
-
-body.pynode .editorButtonIcon, body.pynode_output .editorButtonIcon {
-    float: left;
-    padding-right: 5px;
-    margin-top: -1px;
 }
 
 body.pynode .buttonBarLayoutPanel, body.pynode_output .buttonBarLayoutPanel {
@@ -392,24 +400,30 @@ body.pynode .editorHeader {
    js/resize.js overwrote at runtime; that hack is no longer needed. */
 body.pynode #editor {
     width: 100%;
-    height: 710px;
+    height: 100%;
 }
 
 body.pynode_editor #editor {
     width: 100%;
-    height: calc(100% - 50px);
+    height: 100%;   /* was calc(100% - 50px), which left an empty band under the editor */
 }
 
 body.pynode .appRight {
-    width: 500px;
-    float: right;
-    padding-right: 20px;
+    flex: 0 0 var(--out-w);
+    /* A flex item will not shrink below its content by default, so one long console line
+       (spaces arrive as &nbsp; and never wrap) widened this column and pushed the editor
+       off the screen. The console scrolls sideways instead - see #console. */
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
     height: 100%;
 }
 
+/* Title 32 + canvas + button bar 40 + border 10. */
 body.pynode .outputWrapper {
-    width: 500px;
-    height: 490px;
+    width: 100%;
+    height: calc(var(--out-h) + 32px);   /* title bar */
+    flex: none;
     background-color: var(--bg-panel);
     box-shadow: 0 0 20px 0px var(--shadow);
     border-bottom: 10px solid var(--bg-chrome);
@@ -443,20 +457,56 @@ body.pynode_console .consolePageWrapper {
 }
 
 body.pynode #outputBox {
-    width: 500px;
-    height: 400px;
+    width: var(--out-w);
+    height: var(--out-h);
     background-color: var(--bg-canvas);
 }
 
 body.pynode_output #outputBox {
     width: 100%;
-    height: calc(100% - 80px);
+    height: calc(100% - 40px);   /* title bar only; the run controls live in it */
     background-color: var(--bg-canvas);
 }
 
 body.pynode #output {
-    width: 500px;
-    height: 400px;
+    width: 100%;
+    height: 100%;
+    display: block;
+}
+
+/* While the output is popped out the popup draws every run, so the docked canvas is
+   replaced by a pointer to it (body.output-popped is set by js/pynode_host.js). */
+body.pynode .outputPoppedNote {
+    display: none;
+}
+
+body.pynode.output-popped #output {
+    display: none;
+}
+
+body.pynode.output-popped #outputBox {
+    background-color: var(--bg-inset);
+}
+
+body.pynode.output-popped .outputPoppedNote {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    height: 100%;
+    text-align: center;
+}
+
+body.pynode .outputPoppedNote p {
+    color: var(--text-muted);
+}
+
+/* Scales the 500x400 viewBox to the box. CSS beats the width/height attributes greuler
+   writes on every update. */
+body.pynode #output svg {
+    width: 100%;
+    height: 100%;
     display: block;
 }
 
@@ -467,9 +517,10 @@ body.pynode_output .outputClass {
 }
 
 body.pynode .consoleWrapper {
-    width: 500px;
-    height: 250px;
-    margin-top: 20px;
+    width: 100%;
+    flex: 1;
+    min-height: 120px;
+    margin-top: 8px;
     background-color: var(--bg-panel);
     box-shadow: 0 0 20px 0px var(--shadow);
     border-bottom: 10px solid var(--bg-chrome);
@@ -502,7 +553,9 @@ body.pynode #console, body.pynode_console #console {
     border: 1px solid var(--border);
     padding-left: 2px;
     font-family: monospace;
-    overflow-y: auto;
+    /* Both axes: long lines never wrap (spaces are &nbsp;), so they scroll sideways here
+       rather than widening the panel. */
+    overflow: auto;
 }
 
 /* The field input() appends to the console. Styled to vanish into the transcript so the
@@ -519,7 +572,7 @@ body.pynode #console, body.pynode_console #console {
     min-width: 12ch;
 }
 
-body.pynode .appSectionTitle, body.pynode_output .appSectionTitle, body.pynode_editor .appSectionTitle, body.pynode_console .appSectionTitle {
+body.pynode .appSectionTitle, body.pynode_output .appSectionTitle, body.pynode_editor .appSectionTitle, body.pynode_console .appSectionTitle, body.pynode_docs .appSectionTitle {
     color: var(--text-invert);
     background-color: var(--bg-chrome);
     padding-left: 10px;
@@ -527,6 +580,62 @@ body.pynode .appSectionTitle, body.pynode_output .appSectionTitle, body.pynode_e
     height: 30px;
     padding-top: 10px;
 }
+
+/* COMPACT MAIN PAGE
+   ==================================================
+   The main page's chrome is tighter than the popups' so that a full-size 500x400 output
+   and a readable console both fit on a ~630px-tall viewport. Every height here feeds the
+   216px in --out-h. The popups keep their roomier layout. */
+
+body.pynode .appSectionTitle {
+    height: 26px;
+    padding-top: 6px;
+}
+
+/* The 10px chrome strip under each panel is decoration the main page cannot afford. */
+body.pynode .editorWrapper, body.pynode .outputWrapper, body.pynode .consoleWrapper {
+    border-bottom: none;
+}
+
+body.pynode .consoleBox {
+    width: calc(100% - 16px);
+    height: calc(100% - 44px);   /* title 32 + padding 12 */
+    padding: 6px 8px;
+}
+
+/* The Output title bar carries the run controls (index.html moved the button row up
+   into it), so it is a flex row: title, buttons, layout toggles, pop-out icon. */
+body.pynode .outputWrapper .appSectionTitle {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    height: 32px;
+    padding-top: 0;
+}
+
+body.pynode .outputWrapper .appSectionTitle .floatLeft,
+body.pynode .outputWrapper .appSectionTitle .appSectionEnlarge {
+    float: none;
+    flex: none;
+}
+
+body.pynode .outputWrapper .appSectionTitle .appSectionEnlarge h3 {
+    display: flex;
+}
+
+body.pynode .buttonBarLayoutPanel {
+    float: none;
+    flex: none;
+    width: auto;
+    margin-left: auto;
+    padding: 0;
+    display: flex;
+}
+
+body.pynode .layoutButtonOn, body.pynode .layoutButtonOff {
+    margin-right: 4px;
+}
+
 
 body.pynode .appSectionEnlarge, body.pynode_output .appSectionEnlarge {
     float: right;
@@ -557,53 +666,279 @@ body.pynode .appSectionBarIconDivider, body.pynode_editor .appSectionBarIconDivi
 
 }
 
-body.pynode .pageBottomWrapper {
-    height: 400px;
-    height: auto;
-    position: relative;
-}
+/* HEADER
+   ================================================== */
 
-body.pynode .pynodeGithubStar {
-    float: right;
-    height: 50px;
+/* One slim bar replaces the old 500px hero. The intro text and credits moved into the
+   docs (pynode_docs.html); the example links became the Examples menu. */
+/* Three columns, so the run controls sit at the true centre of the page whatever the two
+   sides hold. */
+body.pynode .pageHeader {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    gap: 14px;
+    height: var(--header-h);
+    box-sizing: border-box;
+    padding: 0 20px;
+    background-color: var(--bg-chrome);
+    color: var(--text-invert);
+    position: relative;
+    z-index: 50;
 }
 
 body.pynode .pynodeLogo {
-    width: 135px;
-    height: 130px;
-    padding-top: 15px;
-    float: left;
+    width: 28px;
+    height: 28px;
+}
+
+body.pynode .pynodeLogo img {
+    display: block;
 }
 
 body.pynode .pynodeTitle {
-    height: 105px;
-    font: 6.0rem/1.1 'Oswald', sans-serif;
+    font: 1.9rem/1 'Oswald', 'Arial', sans-serif;
 }
 
-body.pynode .pynodeSubtitle {
+body.pynode .examplesMenu {
+    position: relative;
+    margin-left: 12px;
+}
+
+/* The header is dark grey (--bg-chrome) in BOTH palettes, so these use the run controls'
+   button faces. --bg-button is light grey in the light palette, which left white text on
+   it at poor contrast. */
+body.pynode .examplesMenu summary,
+body.pynode .docsButton {
+    font: 1.1rem/1 'Oswald', 'Arial', sans-serif;
+    color: var(--text-invert);
+    background-color: var(--run-bg);
+    border-radius: 4px;
+    padding: 6px 12px;
+    cursor: pointer;
+    list-style: none;
+    user-select: none;
+}
+
+body.pynode .examplesMenu summary::-webkit-details-marker {
+    display: none;
+}
+
+body.pynode .examplesMenu summary::after {
+    content: " \25BE";
+}
+
+body.pynode .examplesMenu[open] summary,
+body.pynode .examplesMenu summary:hover,
+body.pynode .docsButton:hover,
+body.pynode.docs-open .docsButton {
+    background-color: var(--run-bg-hover);
+}
+
+body.pynode .examplesMenuList {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    min-width: 240px;
+    padding: 6px 0;
+    background-color: var(--bg-panel);
+    border: 1px solid var(--border);
+    box-shadow: 0 6px 20px 0px var(--shadow);
+}
+
+body.pynode .examplesMenuList a {
+    display: block;
+    padding: 7px 14px;
+    font-size: 14px;
+    font-family: Segoe, "Segoe UI", "DejaVu Sans", "Trebuchet MS", Verdana, sans-serif;
+}
+
+body.pynode .examplesMenuList a:hover {
+    background-color: var(--bg-inset);
+}
+
+body.pynode .headerLeft, body.pynode .headerRight {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    min-width: 0;
+}
+
+body.pynode .headerRight {
+    justify-content: flex-end;
+}
+
+/* Header icon strips: Open/Save on the left, editor pop-out and theme toggle on the
+   right. Same icon boxes as the popups' title-bar strips, so the spacing matches, but a
+   flex row in SOURCE order - those strips float right, which reverses their children. */
+body.pynode .headerActions, body.pynode_editor .headerActions {
+    display: flex;
+    /* Top, not centre: the icon boxes carry a 2px bottom margin the toggle does not, so
+       centring left the toggle 1px low. The float strips this replaces aligned tops. */
+    align-items: flex-start;
     height: 20px;
-    padding-bottom: 8px;
+    padding-right: 0;
 }
 
-body.pynode .pynodeAuthorSubtitle {
-    /* Indent past the floated logo explicitly instead of relying on line-box wrapping.
-       The second line sits below the logo's bottom edge, so it stops wrapping and snaps
-       back to the left. 135px == .pynodeLogo width, so this matches the title's edge. */
-    margin-left: 135px;
-    height: auto;        /* was 20px - only ever fit one line */
-    padding-bottom: 10px;
+body.pynode .headerActions > div, body.pynode_editor .headerActions > div {
+    float: none;
 }
 
-body.pynode .pynodeAuthorSubtitle h5 {
-    line-height: 1.6;
+/* In the editor popup the strip sits at the right of the Source title bar, as the old
+   floated icons did. */
+body.pynode_editor .headerActions {
+    float: right;
+    padding-right: 10px;
 }
 
-body.pynode .pynodeDescription {
-    height: 50px;
+.docsSubtitle {
+    color: var(--text-muted);
+    margin-top: 4px;
 }
 
+/* RUN CONTROLS
+   ==================================================
+   Icon-only and colour-coded: green play/resume, amber pause, red stop, blue restart.
+   Shared by the main page's header and the output popup's title bar - same markup.
+   #runPlay/#runPlayLoad/#runPause/#runResume are swapped by js/pynode_host.js show(),
+   which sets display:inherit on the live one - so #run is a flex box and the icon
+   inherits that. Room is left in the group for debugger buttons later. */
+body.pynode .runControls,
+body.pynode_output .runControls {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
 
-body.pynode code {
+body.pynode .runControls .runButton,
+body.pynode_output .runControls .runButton {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 28px;
+    border-radius: 4px;
+    background-color: var(--run-bg);
+    cursor: pointer;
+    transition: background-color 0.15s ease, opacity 0.15s ease;
+}
+
+body.pynode .runControls .runButton:hover,
+body.pynode_output .runControls .runButton:hover {
+    background-color: var(--run-bg-hover);
+}
+
+body.pynode .runControls .runButton:focus-visible,
+body.pynode_output .runControls .runButton:focus-visible {
+    outline: 2px solid var(--link);
+    outline-offset: 1px;
+}
+
+body.pynode .runIcon svg,
+body.pynode_output .runIcon svg {
+    display: block;
+    width: 18px;
+    height: 18px;
+    fill: currentColor;
+}
+
+body.pynode .iconPlay,
+body.pynode_output .iconPlay { color: var(--run-play); }
+body.pynode .iconPause,
+body.pynode_output .iconPause { color: var(--run-pause); }
+body.pynode .iconStop,
+body.pynode_output .iconStop { color: var(--run-stop); }
+body.pynode .iconRestart,
+body.pynode_output .iconRestart { color: var(--run-restart); }
+body.pynode .iconLoad,
+body.pynode_output .iconLoad { color: var(--text-muted); }
+
+body.pynode .iconLoad svg,
+body.pynode_output .iconLoad svg {
+    animation: runSpin 1s linear infinite;
+}
+
+@keyframes runSpin {
+    to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    body.pynode .iconLoad svg, body.pynode_output .iconLoad svg { animation: none; }
+}
+
+/* Nothing to stop or restart while idle or still loading Python; don't let the red and
+   blue read as live. data-run-state is set by PyNodeHost.setState. */
+body.pynode[data-run-state="idle"] #stop,
+body.pynode_output[data-run-state="idle"] #stop,
+body.pynode[data-run-state="boot"] #stop,
+body.pynode_output[data-run-state="boot"] #stop,
+body.pynode[data-run-state="boot"] #restart,
+body.pynode_output[data-run-state="boot"] #restart {
+    opacity: 0.35;
+    cursor: default;
+}
+
+/* DOCS
+   ================================================== */
+
+/* Slides over the app from the right, below the header. Its content is fetched from
+   pynode_docs.html on first open - see toggleDocs() in index.html. */
+body.pynode .docsDrawer {
+    position: fixed;
+    top: var(--header-h);
+    right: 0;
+    bottom: 0;
+    width: min(680px, 92vw);
+    overflow-y: auto;
+    background-color: var(--bg-panel);
+    box-shadow: 0 0 30px 0px var(--shadow-strong);
+    transform: translateX(105%);
+    visibility: hidden;
+    transition: transform 0.2s ease, visibility 0s linear 0.2s;
+    z-index: 40;
+}
+
+body.pynode.docs-open .docsDrawer {
+    transform: none;
+    visibility: visible;
+    transition: transform 0.2s ease, visibility 0s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    body.pynode .docsDrawer, body.pynode.docs-open .docsDrawer {
+        transition: none;
+    }
+}
+
+/* The title bar stays put while the docs scroll under it. */
+.docsDrawerBar, body.pynode_docs .appSectionTitle {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+
+.docsClose {
+    display: block;
+    font: 2rem/20px 'Arial', sans-serif;
+    text-align: center;
+    color: var(--text-invert);
+}
+
+.docsContent .pageWhole {
+    padding: 24px 28px;
+    border-bottom: 1px solid var(--rule);
+}
+
+.docsContent h1 {
+    font-size: 2.4rem;
+}
+
+body.pynode_docs .docsPageWrapper {
+    min-height: 100%;
+    background-color: var(--bg-panel);
+}
+
+body.pynode code, body.pynode_docs code {
     font-family: monospace;
     font: 1.0rem/1.5 monospace;
     border: 1px solid var(--border);
@@ -613,38 +948,12 @@ body.pynode code {
     padding-bottom: 1px;
 }
 
-body.pynode .codeInline {
+body.pynode .codeInline, body.pynode_docs .codeInline {
     border: none;
 }
 
-body.pynode li {
+body.pynode li, body.pynode_docs li {
     margin: 5px 0px;
-}
-
-/* GENERAL
-   ================================================== */
-.pageTop {
-    width: 750px;
-    height: calc(100% - 70px);
-    margin-top: 50px;
-    margin-left: calc(50% - 425px);
-    box-shadow: 0 0 20px 0px var(--shadow-soft);
-    background-color: var(--bg-panel);
-    padding-left: 50px;
-    padding-right: 50px;
-    padding-top: 40px;
-}
-
-.pageWhole {
-    width: 750px;
-    margin-left: calc(50% - 425px);
-    box-shadow: 0 0 20px 0px var(--shadow-soft);
-    background-color: var(--bg-panel);
-    padding-left: 50px;
-    padding-right: 50px;
-    padding-top: 50px;
-    padding-bottom: 50px;
-    margin-top: 30px;
 }
 
 body .floatLeft {
@@ -678,14 +987,9 @@ body .floatRight {
 /* THEME CONTROLS AND DARK-MODE ASSET FIXES
    ================================================== */
 
-/* These three used to get background-color and cursor set from JavaScript as INLINE
-   styles (index.html / pynode_output.html), which beat any stylesheet rule and so
-   defeated theming entirely. The JS was deleted; this is where they live now. */
-body.pynode #run, body.pynode #stop, body.pynode #restart,
-body.pynode_output #run, body.pynode_output #stop, body.pynode_output #restart {
-    background-color: var(--bg-button-live);
-    cursor: pointer;
-}
+/* #run/#stop/#restart used to get background-color and cursor set from JavaScript as
+   INLINE styles, which beat any stylesheet rule and so defeated theming entirely. Never
+   style them from JS: they are .runButton now, themed under RUN CONTROLS. */
 
 /* Injected by js/pynode_theme.js into the .appSectionTitle icon strip, which is the one
    header structure all four documents share. Children there are float:right. */
@@ -733,7 +1037,62 @@ body.pynode_output #run, body.pynode_output #stop, body.pynode_output #restart {
 :root:not([data-theme="light"]) .layoutButtonOn img,
 :root:not([data-theme="light"]) .layoutButtonOff img { filter: brightness(1.8); }
 
-/* logo.png is black artwork on an OPAQUE white square: invert makes it white-on-black,
-   then screen against the dark panel drops the black away, leaving just the glyph. */
-:root:not([data-theme="light"]) .pynodeLogo img { filter: invert(1); mix-blend-mode: screen; }
+/* Which layout mode is active. A chip one shade off the button bar was all that marked it,
+   which in the dark palette (#37373a on #252526) was almost invisible. An accent ring on
+   the selected mode and a dimmed unselected one read clearly in both themes. */
+body.pynode .layoutButtonOn, body.pynode_output .layoutButtonOn {
+    box-shadow: inset 0 0 0 2px var(--link);
+}
 
+body.pynode .layoutButtonOff, body.pynode_output .layoutButtonOff {
+    opacity: 0.5;
+}
+
+body.pynode .layoutButtonOff:hover, body.pynode_output .layoutButtonOff:hover {
+    opacity: 1;
+}
+
+/* logo.png is black artwork on an OPAQUE white square: invert makes it white-on-black,
+   then screen against the dark header drops the black away, leaving just the glyph. In
+   BOTH themes: the header is dark grey in the light palette too, where the untreated
+   white square looked pasted on. */
+.pynodeLogo img { filter: invert(1); mix-blend-mode: screen; }
+
+
+/* OUTPUT POPUP TITLE BAR
+   ==================================================
+   Mirrors the main page header: title left, run controls centred, layout and theme
+   toggles right. The button row that used to sit under the canvas is gone. */
+body.pynode_output .outputTitle {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    gap: 10px;
+    height: 40px;
+    /* Symmetric padding: the shared title-bar rule pads the left only, which put the
+       centre column 5px right of the bar's true centre. */
+    box-sizing: border-box;
+    width: 100%;
+    padding: 0 10px;
+}
+
+body.pynode_output .outputTitleRight {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+}
+
+body.pynode_output .outputTitle .buttonBarLayoutPanel {
+    float: none;
+    display: flex;
+    width: auto;
+    padding: 0;
+}
+
+body.pynode_output .outputTitle .themeToggleHost {
+    float: none;
+    display: flex;
+    height: 20px;
+    padding-right: 0;
+}

@@ -11,12 +11,12 @@
          wrong colours. Only writes the attribute when the user has chosen; while it is
          absent the stylesheet default applies, which is dark. -->
     <script>(function(){try{var t=localStorage.getItem("pynode-theme");if(t==="dark"||t==="light")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
-    <link href="css/style.css?version=0.9.14" rel="stylesheet" type="text/css">
-    <script src="js/pynode_theme.js?version=0.9.14"></script>
+    <link href="css/style.css?version=0.9.24" rel="stylesheet" type="text/css">
+    <script src="js/pynode_theme.js?version=0.9.21"></script>
     <link rel="icon" type="image/x-icon" href="favicon.ico">
-    <script src="js/resize.js?version=0.9.7"></script>
+    <script src="js/resize.js?version=0.9.16"></script>
     <script src="js/d3_controls.js?version=0.9.7"></script>
-    <script src="js/graph_api.js?version=0.9.7"></script>
+    <script src="js/graph_api.js?version=0.9.17"></script>
     <script src="js/d3/d3.v3.min.js?version=0.9.7"></script>
     <script src="js/cola/cola.v3.js?version=0.9.7"></script>
     <script src="js/greuler/greuler.js?version=0.9.8"></script>
@@ -26,59 +26,48 @@
 <div class="pynodeOutputContainer">
     <div class="outputPageWrapper">
         <div class="outputWrapper">
-            <div class="appSectionTitle">
-                <h3>Output</h3>
+            <!-- Same layout as index.html's header: title left, the run controls centred
+                 (identical markup and ids - PyNodeHost binds #run/#stop/#restart in every
+                 output window), layout toggles and theme toggle right. The old button row
+                 under the canvas is gone, so the canvas gets that height. -->
+            <div class="appSectionTitle outputTitle">
+                <div class="outputTitleLeft">
+                    <h3>Output</h3>
+                </div>
+                <div class="runControls" role="toolbar" aria-label="Run controls">
+                    <div id="run" class="runButton" title="Play / pause" role="button" tabindex="0">
+                        <span id="runPlay" class="runIcon iconPlay"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8 5v14l11-7z"/></svg></span>
+                        <span id="runPlayLoad" class="runIcon iconLoad"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 4a8 8 0 1 0 8 8h-2.5A5.5 5.5 0 1 1 12 6.5z"/></svg></span>
+                        <span id="runPause" class="runIcon iconPause"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg></span>
+                        <span id="runResume" class="runIcon iconPlay"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8 5v14l11-7z"/></svg></span>
+                    </div>
+                    <div id="stop" class="runButton" title="Stop" role="button" tabindex="0">
+                        <span class="runIcon iconStop"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg></span>
+                    </div>
+                    <div id="restart" class="runButton" title="Restart" role="button" tabindex="0">
+                        <span class="runIcon iconRestart"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 5V1.5L7 6l5 4.5V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z"/></svg></span>
+                    </div>
+                </div>
+                <div class="outputTitleRight">
+                    <div class="buttonBarLayoutPanel">
+                        <div id="layout1" title="Pan and zoom (drag nodes, scroll to zoom)">
+                            <div id="layout1On" class="layoutButtonOn" style="display: none"><img
+                                    src="images/controls/layoutButton1.png" width="20" height="20"></div>
+                            <div id="layout1Off" class="layoutButtonOff" style="display: inherit"><img
+                                    src="images/controls/layoutButton1.png" width="20" height="20"></div>
+                        </div>
+                        <div id="layout2" title="Autosize: keep the graph inside the canvas">
+                            <div id="layout2On" class="layoutButtonOn" style="display: inherit"><img
+                                    src="images/controls/layoutButton2.png" width="20" height="20"></div>
+                            <div id="layout2Off" class="layoutButtonOff" style="display: none"><img
+                                    src="images/controls/layoutButton2.png" width="20" height="20"></div>
+                        </div>
+                    </div>
+                    <div class="appSectionEnlarge themeToggleHost"></div>
+                </div>
             </div>
             <div id="outputBox">
                 <div id="output"></div>
-            </div>
-            <div class="editorButtonBar">
-                <div id="run" class="editorButton">
-                    <div id="runPlay">
-                        <div class="editorButtonIcon"><img src="images/controls/play.png" width="20" height="20">
-                        </div>
-                        <h4>PLAY</h4>
-                    </div>
-                    <div id="runPlayLoad">
-                        <div class="editorButtonIcon"><img src="images/controls/loading.png" width="20"
-                                                           height="20"></div>
-                        <h4>LOADING</h4>
-                    </div>
-                    <div id="runPause">
-                        <div class="editorButtonIcon"><img src="images/controls/pause.png" width="20"
-                                                           height="20"></div>
-                        <h4>PAUSE</h4>
-                    </div>
-                    <div id="runResume">
-                        <div class="editorButtonIcon"><img src="images/controls/play.png" width="20" height="20">
-                        </div>
-                        <h4>RESUME</h4>
-                    </div>
-                </div>
-                <div id="stop" class="editorButton">
-                    <div class="editorButtonIcon"><img src="images/controls/stop.png" width="20" height="20">
-                    </div>
-                    <h4>STOP</h4>
-                </div>
-                <div id="restart" class="editorButton">
-                    <div class="editorButtonIcon"><img src="images/controls/restart.png" width="20" height="20">
-                    </div>
-                    <h4>RESTART</h4>
-                </div>
-                <div class="buttonBarLayoutPanel">
-                    <div id="layout1">
-                        <div id="layout1On" class="layoutButtonOn" style="display: inherit"><img
-                                src="images/controls/layoutButton1.png" width="20" height="20"></div>
-                        <div id="layout1Off" class="layoutButtonOff" style="display: none"><img
-                                src="images/controls/layoutButton1.png" width="20" height="20"></div>
-                    </div>
-                    <div id="layout2">
-                        <div id="layout2On" class="layoutButtonOn" style="display: none"><img
-                                src="images/controls/layoutButton2.png" width="20" height="20"></div>
-                        <div id="layout2Off" class="layoutButtonOff" style="display: inherit"><img
-                                src="images/controls/layoutButton2.png" width="20" height="20"></div>
-                    </div>
-                </div>
             </div>
         </div>
     </div>
@@ -92,6 +81,10 @@
         width: document.getElementById("outputBox").offsetWidth,
         height: document.getElementById("outputBox").offsetHeight,
     }).update();
+    // Apply whichever layout mode the buttons show (autosize by default). The mode used to
+    // be applied only when a layout button was CLICKED, so the page showed one mode while
+    // running another, and pan/zoom needed toggling away and back before it responded.
+    set_layout_type();
 </script>
 <script>
     // Drive the opener's single worker. Console output is written by the opener.
@@ -115,12 +108,22 @@
     document.getElementById("stop").onclick = function () { hostCall("stop"); };
     document.getElementById("restart").onclick = function () { hostCall("restart"); };
 
-    // Announce ourselves so the opener can set this window's click listener state. This
-    // does NOT take ownership of the render stream - only pressing Play does, so the
-    // canvas stays blank until then. The opener also assigns an onload handler for this,
-    // but window.open reuses the named window "PyNode Output", so that handler can be
-    // attached too late to ever fire. Both paths are idempotent.
-    hostCall("onRenderTargetChanged");
+    // Announce ourselves: popping out MOVES the output here, so the opener copies its
+    // current graph into this window and draws every run here until we close, when the
+    // graph is copied back. The opener also assigns onload/onbeforeunload handlers for
+    // this, but window.open reuses the named window "PyNode Output", so those can be
+    // attached too late to ever fire. Every path is idempotent. pagehide, not
+    // beforeunload: it fires on close too, and this window's graph must still be alive.
+    // The run controls are focusable divs (role="button"); give them a real button's
+    // keyboard behaviour. .click() goes through whatever onclick PyNodeHost bound.
+    ["run", "stop", "restart"].forEach(function (id) {
+        document.getElementById(id).addEventListener("keydown", function (ev) {
+            if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); this.click(); }
+        });
+    });
+
+    hostCall("outputOpened");
+    window.addEventListener("pagehide", function () { hostCall("outputClosing"); });
 </script>
 <script>
     // The button background and cursor used to be set here as INLINE styles, which beat

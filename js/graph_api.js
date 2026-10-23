@@ -233,6 +233,7 @@ function js_edge_set_width(edge_id, width) {
 function js_edge_set_color(edge_id, color) {
     if (greuler_instance.graph.hasEdge({id: edge_id})) {
         greuler_instance.graph.getEdge({id: edge_id}).stroke = color;
+        delete greuler_instance.graph.getEdge({id: edge_id}).keptStroke;
         animate_edge = greuler_instance.selector.getEdge({id: edge_id});
         greuler_instance.selector.getEdge({id: edge_id}).transition("highlight_edge_color").duration(0);
         animate_edge.transition("edge_color").duration(500).attr("stroke", color);
@@ -259,6 +260,10 @@ function js_edge_highlight(edge_id, width, color) {
 
 function js_edge_traverse(edge_id, initial_node_id, color, keep_path) {
     if (greuler_instance.graph.hasEdge({id: edge_id})) {
+        // greuler colours a kept path in the DOM only, so record it on the data for
+        // PyNodeHost's pop-out snapshot. Not written to .stroke: the next update() would
+        // repaint the edge before the traverse animation reached it.
+        if (keep_path) greuler_instance.graph.getEdge({id: edge_id}).keptStroke = color;
         greuler_instance.selector.traverseEdge({id: edge_id}, {stroke: color, keepStroke: keep_path}, initial_node_id);
     }
 }

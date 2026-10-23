@@ -11,8 +11,8 @@
          wrong colours. Only writes the attribute when the user has chosen; while it is
          absent the stylesheet default applies, which is dark. -->
     <script>(function(){try{var t=localStorage.getItem("pynode-theme");if(t==="dark"||t==="light")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
-    <link href="css/style.css?version=0.9.14" rel="stylesheet" type="text/css">
-    <script src="js/pynode_theme.js?version=0.9.14"></script>
+    <link href="css/style.css?version=0.9.24" rel="stylesheet" type="text/css">
+    <script src="js/pynode_theme.js?version=0.9.21"></script>
     <link rel="icon" type="image/x-icon" href="favicon.ico">
 </head>
 
@@ -39,6 +39,18 @@
         else el.innerHTML = data;
         el.scrollTop = el.scrollHeight;
     }
+
+    // Announce ourselves so the opener copies in the transcript so far and moves a
+    // pending input() field here; on close it moves the field back. The opener repeats
+    // both from its own handlers, which window.open's named-window reuse can attach too
+    // late. Idempotent either way.
+    function hostCall(fn) {
+        try {
+            if (window.opener && window.opener.PyNodeHost) window.opener.PyNodeHost[fn](window);
+        } catch (e) { console.error("PyNode: opener unreachable", e); }
+    }
+    hostCall("consoleOpened");
+    window.addEventListener("pagehide", function () { hostCall("consoleClosing"); });
 </script>
 </body>
 </html>

@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>PyNode Docs</title>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <!-- Must load first, like every other page. See index.html. -->
+    <script src="coi-serviceworker.js"></script>
+    <script>(function(){try{var t=localStorage.getItem("pynode-theme");if(t==="dark"||t==="light")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+    <link href="css/style.css?version=0.9.24" rel="stylesheet" type="text/css">
+    <script src="js/pynode_theme.js?version=0.9.21"></script>
+    <link rel="icon" type="image/x-icon" href="favicon.ico">
+</head>
+
+<!-- The single source of the documentation. Opened detached by docsPopup() in index.html,
+     and also fetched by index.html, which lifts .docsContent out of it into the in-page
+     drawer - so this markup must not depend on anything outside .docsContent. -->
+<body class="pynode_docs">
+<div class="docsPageWrapper">
+    <div class="appSectionTitle">
+        <div class="floatLeft">
+            <h3>Documentation</h3>
+        </div>
+    </div>
+    <div class="docsContent">
+            <div class="pageWhole">
+                <h1>PyNode</h1>
+                <h3 class="docsSubtitle">Graph Theory Visualiser</h3>
+                <p>&nbsp;</p>
+                <p>PyNode allows you to create, animate and display graphs with a simple Python interface, all
+                    within your browser. Pick an example from the <b>Examples</b> menu, or write your own!</p>
+                <p>&nbsp;</p>
+                <p>Your code runs as real CPython, in the background, so the page stays responsive while it
+                    works &mdash; and <b>STOP</b> will always interrupt it, even in an endless loop.</p>
+            </div>
+            <div class="pageWhole">
+                <h1>Documentation</h1>
+                <h4>&nbsp;</h4>
+                <h2>Graph</h2>
+                <ul>
+                    <li>
+                        <p><code>graph.add_node(node)</code> - Adds a node to the graph.</p>
+                    </li>
+                    <li>
+                        <p><code>graph.add_node(id=None, value=id)</code> - Creates a <code class="codeInline">Node(id,
+                            value)</code> and adds it to the graph.</p>
+                    </li>
+                    <li>
+                        <p><code>graph.remove_node(node)</code> - Removes a node from the graph.</p>
+                    </li>
+                    <li>
+                        <p><code>graph.node(id)</code> - Returns a node in the graph by its <code
+                                class="codeInline">id</code>.</p>
+                    </li>
+                    <li>
+                        <p><code>graph.nodes()</code> - Returns a list of all nodes in the graph.</p>
+                    </li>
+                    <p>&nbsp;</p>
+                    <li>
+                        <p><code>graph.add_edge(edge)</code> - Adds an edge to the graph.</p>
+                    </li>
+                    <li>
+                        <p><code>graph.add_edge(source, target, weight=None, directed=False)</code> - Creates an <code
+                                class="codeInline">Edge(source, target, weight, directed)</code> and adds it to the
+                            graph.</p>
+                    </li>
+                    <li>
+                        <p><code>graph.remove_edge(edge)</code> - Removes an edge from the graph.</p>
+                    </li>
+                    <li>
+                        <p><code>graph.remove_edge(node1, node2, directed=False)</code> - Removes edge(s) between <code
+                                class="codeInline">node1</code> and <code class="codeInline">node2</code>. If <code
+                                class="codeInline">directed</code> is set, only edges beginning at <code
+                                class="codeInline">node1</code> will be removed.</p>
+                    </li>
+                    <p>&nbsp;</p>
+                    <li>
+                        <p><code>graph.has_node(node)</code> - Checks whether a node has been added to the graph.</p>
+                    </li>
+                    <li>
+                        <p><code>graph.has_edge(edge)</code> - Checks whether an edge has been added to the graph.</p>
+                    </li>
+                    <li>
+                        <p><code>graph.adjacent(node1, node2, directed=False)</code> - Checks whether an edge exists
+                            between <code class="codeInline">node1</code> and <code class="codeInline">node2</code>. If
+                            <code class="codeInline">directed</code> is set, the edge must begin at <code
+                                    class="codeInline">node1</code>.</p>
+                    </li>
+                    <li>
+                        <p><code>graph.edges_between(node1, node2, directed=False)</code> - Returns a list of all edges
+                            between <code class="codeInline">node1</code> and <code class="codeInline">node2</code>. If
+                            <code class="codeInline">directed</code> is set, only edges beginning at <code
+                                    class="codeInline">node1</code> will be included.</p>
+                    </li>
+                    <p>&nbsp;</p>
+                    <li>
+                        <p><code>graph.set_directed(directed=True)</code> - Sets whether all edges in the graph are
+                            directed.</p>
+                    </li>
+                    <li>
+                        <p><code>graph.adjacency_matrix()</code> - Creates and returns an adjacency matrix
+                            (2-dimensional dictionary, using node <code class="codeInline">id</code> values as keys) for
+                            the graph.</p>
+                    </li>
+                    <li>
+                        <p><code>graph.add_all(elements)</code> - Adds a list of <code class="codeInline">Node</code>
+                            and/or <code class="codeInline">Edge</code> elements to the graph.</p>
+                    </li>
+                    <li>
+                        <p><code>graph.remove_all(elements)</code> - Removes a list of <code
+                                class="codeInline">Node</code> and/or <code class="codeInline">Edge</code> elements from
+                            the graph.</p>
+                    </li>
+                    <li>
+                        <p><code>graph.random(order, size, connected=True, multigraph=False, initial_id=0)</code> -
+                            Returns a list of randomly connected nodes and edges, with <code
+                                    class="codeInline">order</code> specifying the amount of nodes and <code
+                                    class="codeInline">size</code> specifying the amount of edges. If <code
+                                    class="codeInline">connected</code> is set, a path will exist between any pair of
+                            nodes (unless the amount of edges makes this impossible). If <code class="codeInline">multigraph</code>
+                            is set, a pair of nodes may be connected by multiple edges. Nodes are assigned incremental
+                            <code class="codeInline">id</code> values starting at <code
+                                    class="codeInline">initial_id</code>.</p>
+                    </li>
+                    <li>
+                        <p><code>graph.order()</code>, <code>graph.size()</code> - Returns the number of nodes/edges in
+                            the graph.</p>
+                    </li>
+                    <!--<li>
+                      <p><code>graph.set_spread(spread=80)</code> - Sets the visual sparseness of the graph (i.e. the minimum edge length).</p>
+                    </li>-->
+                    <li>
+                        <p><code>graph.clear()</code> - Deletes all nodes and edges from the graph.</p>
+                    </li>
+                </ul>
+                <p>Note: All functions containing node parameters accept either a <code class="codeInline">Node</code>
+                    instance or node <code class="codeInline">id</code> value.</p>
+                <h2>&nbsp;</h2>
+                <h2>Node</h2>
+                <ul>
+                    <li>
+                        <p><code>Node(id=None, value=id)</code> - Creates a node with the specified <code
+                                class="codeInline">id</code> and <code class="codeInline">value</code>. Assigns a unique
+                            <code class="codeInline">id</code> integer if the specified <code
+                                    class="codeInline">id</code> is <code class="codeInline">None</code>.</p>
+                    </li>
+                    <li>
+                        <p><code>node.id()</code> - Returns the <code class="codeInline">id</code> of the node.</p>
+                    </li>
+                    <li>
+                        <p><code>node.set_value()</code>, <code>node.value()</code> - Sets/gets the <code
+                                class="codeInline">value</code> of the node.</p>
+                    </li>
+                    <li>
+                        <p><code>node.incident_edges()</code>, <code>node.incoming_edges()</code>, <code>node.outgoing_edges()</code>
+                            - Returns a list of the node's incident/incoming/outgoing edges.</p>
+                    </li>
+                    <li>
+                        <p><code>node.adjacent_nodes()</code>, <code>node.predecessor_nodes()</code>, <code>node.successor_nodes()</code>
+                            - Returns a list of the node's adjacent/predecessor/successor nodes.</p>
+                    </li>
+                    <li>
+                        <p><code>node.degree()</code>, <code>node.indegree()</code>, <code>node.outdegree()</code> -
+                            Returns the node's degree/indegree/ outdegree.</p>
+                    </li>
+                    <li>
+                        <p><code>node.set_attribute(name, value)</code>, <code>node.attribute(name)</code> - Sets/gets
+                            custom attributes for the node.</p>
+                    </li>
+                    <li>
+                        <p><code>node.set_priority(value)</code>, <code>node.priority(name)</code> - Sets/gets a
+                            priority value used for comparison.</p>
+                    </li>
+                    <p>&nbsp;</p>
+                    <li>
+                        <p><code>node.set_position(x, y, relative=False)</code> - Sets the static position of the node.
+                            <code class="codeInline">x</code> and <code class="codeInline">y</code> are pixel
+                            coordinates, with (0, 0) being
+                            the top-left corner of the output window (the standard size of the window is 500x400). If
+                            <code class="codeInline">relative</code> is
+                            set, <code class="codeInline">x</code> and <code class="codeInline">y</code> should instead
+                            be values between 0.0 and 1.0, specifying the node's position as a percentage of the
+                            window size.</p>
+                    </li>
+                    <li>
+                        <p><code>node.position()</code> - Returns a tuple with the (x, y) coordinates of the node,
+                            as of the most recent frame. Call it after a <code class="codeInline">pause</code>, or
+                            from a delayed or click-listener function, so the layout has had a chance to settle.
+                    </li>
+                    <li>
+                        <p><code>node.set_label(value, label_id=0)</code>, <code>node.label(label_id)</code> - Sets/gets
+                            the value of additional labels for the node (Use <code class="codeInline">label_id=0</code>
+                            for the top-right label and <code class="codeInline">label_id=1</code> for the top
+                            left-label).</p>
+                    </li>
+                    <li>
+                        <p><code>node.set_size(size=12)</code>, <code>node.size()</code> - Sets/gets the radius of the
+                            node.</p>
+                    </li>
+                    <li>
+                        <p><code>node.set_color(color=Color.DARK_GREY)</code>, <code>node.color()</code> - Sets/gets the
+                            color of the node.</p>
+                    </li>
+                    <li>
+                        <p><code>node.set_value_style(size=13, color=Color.WHITE, outline=None)</code> - Sets the
+                            appearance of the node's value text (if no <code class="codeInline">outline</code> is
+                            specified,
+                            the node's background color will be used for the outline).</p>
+                    </li>
+                    <li>
+                        <p><code>node.set_label_style(size=10, color=Color.GREY, outline=None, lable_id=None)</code> -
+                            Sets the appearance of the node's label text (if no <code class="codeInline">lable_id</code>
+                            is specified, both labels will be affected).</p>
+                    </li>
+                    <li>
+                        <p><code>node.highlight(color=node.color(), size=node.size()*1.5)</code> - Performs a highlight
+                            animation by temporarily changing the size and color of the node.</p>
+                    </li>
+                </ul>
+                <p>&nbsp;</p>
+                <h2>Edge</h2>
+                <ul>
+                    <li>
+                        <p><code>Edge(source, target, weight=None, directed=False)</code> - Creates an edge between the
+                            specified <code class="codeInline">source</code> and <code class="codeInline">target</code>
+                            nodes, with optional <code class="codeInline">weight</code> and <code class="codeInline">directed</code>
+                            properties.</p>
+                    </li>
+                    <li>
+                        <p><code>edge.source()</code>, <code>edge.target()</code> - Returns the edge's source/target
+                            nodes.</p>
+                    </li>
+                    <li>
+                        <p><code>edge.set_weight(weight=None)</code>, <code>edge.weight()</code> - Sets/gets the weight
+                            of the edge.</p>
+                    </li>
+                    <li>
+                        <p><code>edge.set_directed(directed=True)</code>, <code>edge.directed()</code> - Sets/gets
+                            whether the edge is directed.</p>
+                    </li>
+                    <li>
+                        <p><code>edge.other_node(node)</code> - Returns a node connected by the edge, other than the
+                            node specified.</p>
+                    </li>
+                    <li>
+                        <p><code>edge.set_attribute(name, value)</code>, <code>edge.attribute(name)</code> - Sets/gets
+                            custom attributes for the edge.</p>
+                    </li>
+                    <li>
+                        <p><code>edge.set_priority(value)</code>, <code>edge.priority(name)</code> - Sets/gets a
+                            priority value used for comparison.</p>
+                    </li>
+                    <p>&nbsp;</p>
+                    <li>
+                        <p><code>edge.set_width(width=2)</code>, <code>edge.width()</code> - Sets/gets the width of the
+                            edge.</p>
+                    </li>
+                    <li>
+                        <p><code>edge.set_color(color=Color.LIGHT_GREY)</code>, <code>edge.color()</code> - Sets/gets
+                            the color of the edge.</p>
+                    </li>
+                    <li>
+                        <p><code>edge.set_weight_style(size=10, color=Color.GREY, outline=None)</code> - Sets the
+                            appearance of the edge's weight text.</p>
+                    </li>
+                    <li>
+                        <p><code>edge.highlight(color=edge.color(), width=edge.width()*2)</code> - Performs a highlight
+                            animation by temporarily changing the width and color of the edge.</p>
+                    </li>
+                    <li>
+                        <p><code>edge.traverse(initial_node=edge.source(), color=Color.RED, keep_path=True)</code> -
+                            Performs a traversal animation on the edge, beginning at <code class="codeInline">initial_node</code>
+                            and using the specified <code class="codeInline">color</code>. If <code class="codeInline">keep_path</code>
+                            is set, the edge will remain colored.</p>
+                    </li>
+                </ul>
+                <p>&nbsp;</p>
+                <h2>Miscellaneous</h2>
+                <ul>
+                    <li>
+                        <p><code>Color(red, green, blue)</code> - Custom color for use in node and edge animations,
+                            using 0-255 values for each component.</p>
+                    </li>
+                    <li>
+                        <p><code>Color.RED</code>, <code>Color.GREEN</code>, <code>Color.BLUE</code>,
+                            <code>Color.YELLOW</code>, <code>Color.WHITE</code>, <code>Color.LIGHT_GREY</code>, <code>Color.GREY</code>,
+                            <code>Color.DARK_GREY</code>, <code>Color.BLACK</code>, <code>Color.TRANSPARENT</code> -
+                            Predefined colors for use in node and edge animations.</p>
+                    </li>
+                    <li>
+                        <p><code>pause(time)</code> - Pauses your code for the specified number of milliseconds,
+                            while the graph continues to animate. Scheduled <code class="codeInline">delay</code>
+                            functions and node clicks are still handled during a pause.</p>
+                    </li>
+                    <li>
+                        <p><code>delay(func, time, args=[], repeat=False)</code> - Executes a function after the
+                            specified number of milliseconds, with the optional <code class="codeInline">args</code>
+                            list of parameters. If <code class="codeInline">repeat</code> is set, the function will
+                            execute
+                            continuously until the delay is cancelled. Returns a <code
+                                    class="codeInline">delay_id</code> integer referencing the delay.</p>
+                    </li>
+                    <li>
+                        <p><code>cancel_delay(delay_id)</code> - Cancels a scheduled delay event.</p>
+                    </li>
+                    <li>
+                        <p><code>register_click_listener(func)</code> - Registers a function which will be called
+                            whenever a node is clicked. The function must include a <code class="codeInline">node</code>
+                            parameter (e.g. <code class="codeInline">def on_click(node)</code>), which will receive the
+                            instance of the clicked node.</p>
+                    </li>
+                </ul>
+
+            </div>
+            <div class="pageWhole">
+                <h1>About</h1>
+                <p>&nbsp;</p>
+                <p>PyNode was designed and created by <a href="https://github.com/alexsocha">Alex Socha</a>.
+                    Updated editor and Pyodide integration by <a href="https://github.com/toanh">Toan Huynh</a>
+                    with assistance from <a href="https://claude.ai">Anthropic Claude</a>.</p>
+                <p>&nbsp;</p>
+                <p>It is built with the following technologies:</p>
+                <ul>
+                    <li>
+                        <p><a href="http://marvl.infotech.monash.edu/webcola/">WebCola</a> - Monash Adaptive
+                            Visualization Lab (<a href="https://github.com/tgdwyer/WebCola">GitHub</a>)</p>
+                    </li>
+                    <li>
+                        <p><a href="https://d3js.org/" target="_blank">D3.js</a> - Mike Bostock (<a
+                                href="https://github.com/d3/d3">GitHub</a>)</p>
+                    </li>
+                    <li>
+                        <p><a href="https://maurizzzio.github.io/greuler/#/" target="_blank">greuler</a> - Mauricio
+                            Poppe (<a href="https://github.com/maurizzzio/greuler/">GitHub</a>)</p>
+                    </li>
+                    <li>
+                        <p><a href="https://pyodide.org/" target="_blank">Pyodide</a> - Pyodide contributors (<a
+                                href="https://github.com/pyodide/pyodide">GitHub</a>)</p>
+                    </li>
+                    <li>
+                        <p><a href="https://microsoft.github.io/monaco-editor/" target="_blank">Monaco Editor</a> -
+                            Microsoft (<a href="https://github.com/microsoft/monaco-editor">GitHub</a>)</p>
+                    </li>
+                </ul>
+                <p>&nbsp;</p>
+                <p>Note: You can now use <a href="https://github.com/algrx/algorithmx">AlgorithmX</a> to create even better network visualizations!</p>
+            </div>
+    </div>
+</div>
+</body>
+</html>

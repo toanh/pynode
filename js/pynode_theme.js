@@ -70,12 +70,14 @@ var PyNodeTheme = (function () {
         set(resolved() === "dark" ? "light" : "dark");
     }
 
-    // The .appSectionTitle bar is the only header structure all four documents share.
-    // index.html and the editor popup have an .appSectionEnlarge icon strip inside it; the
+    // index.html marks where it wants the toggle with .themeToggleHost (a strip in the page
+    // header, just left of Docs). Elsewhere the .appSectionTitle bar is the shared
+    // structure: the editor popup has an .appSectionEnlarge icon strip inside it; the
     // console and output popups do not, so the toggle goes straight into the bar.
     function injectToggle() {
         if (document.querySelector(".themeToggle")) return;
-        var strip = document.querySelector(".appSectionTitle .appSectionEnlarge");
+        var strip = document.querySelector(".themeToggleHost") ||
+                    document.querySelector(".appSectionTitle .appSectionEnlarge");
         var host = strip || document.querySelector(".appSectionTitle");
         if (!host) return;
 

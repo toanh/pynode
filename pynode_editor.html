@@ -11,10 +11,10 @@
          wrong colours. Only writes the attribute when the user has chosen; while it is
          absent the stylesheet default applies, which is dark. -->
     <script>(function(){try{var t=localStorage.getItem("pynode-theme");if(t==="dark"||t==="light")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
-    <link href="css/style.css?version=0.9.14" rel="stylesheet" type="text/css">
-    <script src="js/pynode_theme.js?version=0.9.14"></script>
+    <link href="css/style.css?version=0.9.24" rel="stylesheet" type="text/css">
+    <script src="js/pynode_theme.js?version=0.9.21"></script>
     <link rel="icon" type="image/x-icon" href="favicon.ico">
-    <script src="js/resize.js?version=0.9.7"></script>
+    <script src="js/resize.js?version=0.9.16"></script>
 
     <script>
         var enable_editor = true;
@@ -29,11 +29,14 @@
                 <div class="floatLeft">
                     <h3>Source</h3>
                 </div>
-                <div class="appSectionEnlarge">
-                    <div class="appSectionBarIcon"><h3><a href=""
+                <!-- Open, Save, then the theme toggle, left to right - the same order as the
+                     main page header. A flex row in source order rather than right floats,
+                     which reversed it; the toggle is appended to .themeToggleHost. -->
+                <div class="appSectionEnlarge headerActions themeToggleHost">
+                    <div class="appSectionBarIcon"><h3><a href="" title="Open a file"
                                                           onclick="document.getElementById('file-input').click(); return false;"><img
                             src="images/controls/import.png" width="16" height="16"></a></h3></div>
-                    <div class="appSectionBarIcon"><h3><a href="" onclick="userSaveCode(); return false;"><img
+                    <div class="appSectionBarIcon"><h3><a href="" title="Save to a file" onclick="userSaveCode(); return false;"><img
                             src="images/controls/save.png" width="16" height="16"></a></h3></div>
                 </div>
             </div>
@@ -45,7 +48,7 @@
 </div>
 <script src="js/monaco/vs/loader.js"></script>
 <script src="js/pynode_completions.js?version=0.9.11"></script>
-<script src="js/monaco_setup.js?version=0.9.11"></script>
+<script src="js/monaco_setup.js?version=0.9.24"></script>
 <script>
     function getCode() {
         return window.editor ? window.editor.getValue() : "";
@@ -55,6 +58,11 @@
     }
     function setCode(src) {
         if (enable_editor) applyCode(src);
+    }
+    // Undoable write, for loading a file or an example over what the user had: one
+    // Ctrl+Z puts their previous code back. applyCode resets the undo stack.
+    function replaceCode(src) {
+        if (window.editor) window.editor.replaceValue(src);
     }
 
     // Seed once from the opener; after that the two editors stay in sync over
@@ -81,10 +89,12 @@
         var reader = new FileReader();
         reader.onload = (function (theFile) {
             return function (e) {
-                setCode(e.target.result);
+                if (enable_editor) replaceCode(e.target.result);
             };
         })(file);
         reader.readAsText(file);
+        // Otherwise choosing the same file again fires no change event.
+        event.target.value = "";
     }
     function userSaveCode() {
         var text = getCode();

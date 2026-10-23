@@ -1,10 +1,19 @@
+// Used to centre #appContainer and size #editor in px. css/style.css lays the app out
+// with flexbox now and Monaco's automaticLayout follows its container, so there is
+// nothing left to do; kept because index.html still calls it.
 function resize() {
-    document.getElementById("appContainer").style.marginLeft = (document.getElementById("appWrapper").offsetWidth / 2 - (document.getElementById("appContainer").offsetWidth / 2)) + "px";
-    document.getElementById("appContainer").style.visibility = "visible";
-    document.getElementById("editor").style.width = (document.getElementById("appContainer").offsetWidth - 560) + "px";
 }
 
 function editor_resize() {
+}
+
+// The size the LAYOUT works in, not the on-screen box. On the main page the box is
+// scaled to fit the viewport while the viewBox keeps the graph in a fixed 500x400, so
+// the box's clientWidth would squeeze every node into the top-left corner. In the
+// output popup output_resize() writes the box size into these options, so it is the
+// same number there.
+function layoutSize() {
+    return [greuler_instance.options.width, greuler_instance.options.height];
 }
 
 var resizeLayoutTimer = undefined;
@@ -46,8 +55,9 @@ function updateLayout() {
     if (greuler_instance !== undefined) {
         setNodePositions();
 
-        var w = document.getElementById("outputBox").clientWidth;
-        var h = document.getElementById("outputBox").clientHeight;
+        var size = layoutSize();
+        var w = size[0];
+        var h = size[1];
         var tlBoundaryIndex = -1;
         var brBoundaryIndex = -1;
 
@@ -119,8 +129,9 @@ function fixLayout() {
         if (draggingNode) {
             return;
         }
-        var w = document.getElementById("outputBox").clientWidth;
-        var h = document.getElementById("outputBox").clientHeight;
+        var size = layoutSize();
+        var w = size[0];
+        var h = size[1];
         var didFix = false;
         for (var i = 0; i < greuler_instance.graph.nodes.length; i++) {
             var node = greuler_instance.graph.nodes[i];
@@ -157,8 +168,9 @@ function fixLayout() {
 function setNodePositions() {
     var didUpdate = false;
     if (greuler_instance !== undefined && greuler_instance.graph !== undefined) {
-        var w = document.getElementById("outputBox").clientWidth;
-        var h = document.getElementById("outputBox").clientHeight;
+        var size = layoutSize();
+        var w = size[0];
+        var h = size[1];
         for (var i = 0; i < greuler_instance.graph.nodes.length; i++) {
             var node = greuler_instance.graph.nodes[i];
             if (node.id === tlBoundary.id || node.id === brBoundary.id || !node.static) {

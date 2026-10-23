@@ -50,6 +50,21 @@ var PyNodeEditor = (function () {
                     mon.setValue(src == null ? "" : String(src));
                     mon.setPosition({ lineNumber: 1, column: 1 });
                 },
+                // Like setValue, but as ONE undoable edit: setValue throws the undo stack
+                // away, so opening a file or an example could not be undone. The undo stops
+                // either side keep it from merging with typing before or after.
+                replaceValue: function (src) {
+                    var model = mon.getModel();
+                    mon.pushUndoStop();
+                    mon.executeEdits("pynode-replace", [{
+                        range: model.getFullModelRange(),
+                        text: src == null ? "" : String(src),
+                        forceMoveMarkers: true
+                    }]);
+                    mon.pushUndoStop();
+                    mon.setPosition({ lineNumber: 1, column: 1 });
+                    mon.revealLine(1);
+                },
                 on: function (evt, fn) {
                     if (evt === "change") return mon.onDidChangeModelContent(fn);
                 },

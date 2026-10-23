@@ -112,28 +112,53 @@ test('Monaco follows the theme, including on a first visit', async () => {
 // than written into the markup, so it does not inherit .appSectionBarIcon's box and has
 // twice been out of step: a 32px box (12px padding + 20px) left only 4px to its neighbour
 // where the others leave 14px, and an inline svg sat 1.6px above the raster icons.
+// Open, Save, then the theme toggle, left to right like a File menu - in the main header
+// (between Examples and the centred run controls) and in the editor popup alike. The
+// toggle is injected by js/pynode_theme.js, so it has twice drifted out of line before.
+async function fileStrip(w, scope) {
+    return w.evaluate((scope) => {
+        const box = (el) => {
+            const r = el.getBoundingClientRect();
+            return { top: r.top, left: r.left, right: r.right };
+        };
+        const icon = (src) => box(document.querySelector(`${scope} img[src*="${src}"]`));
+        return {
+            open: icon('import.png'),
+            save: icon('save.png'),
+            toggle: box(document.querySelector(`${scope} .themeToggle svg`)),
+        };
+    }, scope);
+}
+
+function assertStrip(g, where) {
+    const tops = [g.open.top, g.save.top, g.toggle.top];
+    assert.equal(new Set(tops).size, 1, `${where}: the 16px icons are not on one baseline: ${tops.join(', ')}`);
+    assert.ok(g.open.right < g.save.left && g.save.right < g.toggle.left,
+        `${where}: the order is not Open, Save, Theme`);
+    assert.deepEqual([g.save.left - g.open.right, g.toggle.left - g.save.right], [14, 14],
+        `${where}: uneven spacing between the icons`);
+}
+
 test('the injected theme toggle lines up with the icons beside it', async () => {
     const { context, page } = await openApp(harness, { waitForWorker: false });
     try {
-        const strip = await page.evaluate(() => {
-            const glyphs = [...document.querySelectorAll('.appSectionEnlarge img, .appSectionEnlarge svg')]
-                .map((g) => {
-                    const r = g.getBoundingClientRect();
-                    return { w: Math.round(r.width), top: r.top, left: r.left, right: r.right };
-                })
-                .filter((g) => g.w === 16)          // the 16px icons; resize.png is 20px
-                .sort((a, b) => a.left - b.left);
-            return {
-                tops: glyphs.map((g) => g.top),
-                gaps: glyphs.slice(1).map((g, i) => g.left - glyphs[i].right),
-            };
-        });
+        const g = await fileStrip(page, '.pageHeader');
+        assertStrip(g, 'header');
+        const edges = await page.evaluate(() => ({
+            examples: document.querySelector('.examplesMenu').getBoundingClientRect().right,
+            controls: document.querySelector('.runControls').getBoundingClientRect().left,
+        }));
+        assert.ok(edges.examples <= g.open.left && g.toggle.right <= edges.controls,
+            'Open/Save/Theme are not between Examples and the run controls');
+        assert.equal(await page.evaluate(() => document.querySelector('.pageHeader').textContent.includes('Visuali')),
+            false, 'the subtitle is back in the header');
 
-        assert.equal(strip.tops.length, 3, 'expected the toggle plus save and import');
-        assert.equal(new Set(strip.tops).size, 1,
-            `the 16px icons are not on one baseline: ${strip.tops.join(', ')}`);
-        assert.deepEqual(strip.gaps, [14, 14],
-            `uneven spacing between the icons: ${strip.gaps.join(', ')}`);
+        const popup = await openPopup(page, 'editorPopup');
+        try {
+            assertStrip(await fileStrip(popup, '.appSectionTitle'), 'editor popup');
+        } finally {
+            await popup.close();
+        }
     } finally {
         await context.close();
     }
